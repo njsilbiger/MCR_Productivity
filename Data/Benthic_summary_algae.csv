@@ -1,0 +1,590 @@
+Year,Site,name,total_cover,mean_cover
+2006,LTER 1,Coral,1552,31.04
+2006,LTER 1,Crustose Corallines,92,1.84
+2006,LTER 1,Fleshy Macroalgae,276,5.52
+2006,LTER 1,Sand,736,14.72
+2006,LTER 1,Turf/Cyanobacteria,2344,46.88
+2006,LTER 2,Coral,1444,28.88
+2006,LTER 2,Crustose Corallines,52,1.04
+2006,LTER 2,Fleshy Macroalgae,640,12.8
+2006,LTER 2,Sand,1288,25.76
+2006,LTER 2,Turf/Cyanobacteria,1576,31.52
+2006,LTER 3,Coral,1836,36.72
+2006,LTER 3,Crustose Corallines,8,0.16
+2006,LTER 3,Fleshy Macroalgae,56,1.12
+2006,LTER 3,Sand,1484,29.68
+2006,LTER 3,Turf/Cyanobacteria,1616,32.32
+2006,LTER 4,Coral,1632,32.64
+2006,LTER 4,Crustose Corallines,8,0.16
+2006,LTER 4,Fleshy Macroalgae,0,0
+2006,LTER 4,Sand,472,9.44
+2006,LTER 4,Turf/Cyanobacteria,2888,57.76
+2006,LTER 5,Coral,1396,27.92
+2006,LTER 5,Crustose Corallines,32,0.64
+2006,LTER 5,Fleshy Macroalgae,24,0.48
+2006,LTER 5,Sand,1412,28.24
+2006,LTER 5,Turf/Cyanobacteria,2136,42.72
+2006,LTER 6,Coral,980,19.6
+2006,LTER 6,Crustose Corallines,20,0.4
+2006,LTER 6,Fleshy Macroalgae,24,0.48
+2006,LTER 6,Sand,1772,35.44
+2006,LTER 6,Turf/Cyanobacteria,2204,44.08
+2007,LTER 1,Coral,1504,30.08
+2007,LTER 1,Crustose Corallines,148,2.96
+2007,LTER 1,Fleshy Macroalgae,188,3.76
+2007,LTER 1,Sand,608,12.16
+2007,LTER 1,Turf/Cyanobacteria,2552,51.04
+2007,LTER 2,Coral,1524,30.48
+2007,LTER 2,Crustose Corallines,64,1.28
+2007,LTER 2,Fleshy Macroalgae,256,5.12
+2007,LTER 2,Sand,1008,20.16
+2007,LTER 2,Turf/Cyanobacteria,2148,42.96
+2007,LTER 3,Coral,2004,40.08
+2007,LTER 3,Crustose Corallines,4,0.08
+2007,LTER 3,Fleshy Macroalgae,112,2.24
+2007,LTER 3,Sand,1608,32.16
+2007,LTER 3,Turf/Cyanobacteria,1272,25.44
+2007,LTER 4,Coral,1692,33.84
+2007,LTER 4,Crustose Corallines,0,0
+2007,LTER 4,Fleshy Macroalgae,56,1.12
+2007,LTER 4,Sand,672,13.44
+2007,LTER 4,Turf/Cyanobacteria,2580,51.6
+2007,LTER 5,Coral,1384,27.68
+2007,LTER 5,Crustose Corallines,28,0.56
+2007,LTER 5,Fleshy Macroalgae,28,0.56
+2007,LTER 5,Sand,1540,30.8
+2007,LTER 5,Turf/Cyanobacteria,2020,40.4
+2007,LTER 6,Coral,1100,22
+2007,LTER 6,Crustose Corallines,0,0
+2007,LTER 6,Fleshy Macroalgae,36,0.72
+2007,LTER 6,Sand,1600,32
+2007,LTER 6,Turf/Cyanobacteria,2264,45.28
+2008,LTER 1,Coral,1272,25.44
+2008,LTER 1,Crustose Corallines,236,4.72
+2008,LTER 1,Fleshy Macroalgae,168,3.36
+2008,LTER 1,Sand,416,8.32
+2008,LTER 1,Turf/Cyanobacteria,2908,58.16
+2008,LTER 2,Ascidian,12,0.24
+2008,LTER 2,Coral,1792,35.84
+2008,LTER 2,Crustose Corallines,172,3.44
+2008,LTER 2,Fleshy Macroalgae,284,5.68
+2008,LTER 2,Sand,1092,21.84
+2008,LTER 2,Turf/Cyanobacteria,1648,32.96
+2008,LTER 3,Coral,1848,36.96
+2008,LTER 3,Crustose Corallines,16,0.32
+2008,LTER 3,Fleshy Macroalgae,236,4.72
+2008,LTER 3,Sand,1112,22.24
+2008,LTER 3,Turf/Cyanobacteria,1788,35.76
+2008,LTER 4,Coral,1336,26.72
+2008,LTER 4,Crustose Corallines,4,0.08
+2008,LTER 4,Fleshy Macroalgae,40,0.8
+2008,LTER 4,Sand,512,10.24
+2008,LTER 4,Turf/Cyanobacteria,3108,62.16
+2008,LTER 5,Coral,1412,28.24
+2008,LTER 5,Crustose Corallines,48,0.96
+2008,LTER 5,Fleshy Macroalgae,144,2.88
+2008,LTER 5,Sand,1248,24.96
+2008,LTER 5,Turf/Cyanobacteria,2148,42.96
+2008,LTER 6,Coral,1180,23.6
+2008,LTER 6,Crustose Corallines,64,1.28
+2008,LTER 6,Fleshy Macroalgae,168,3.36
+2008,LTER 6,Sand,1636,32.72
+2008,LTER 6,Turf/Cyanobacteria,1952,39.04
+2009,LTER 1,Coral,1120,22.4
+2009,LTER 1,Crustose Corallines,536,10.72
+2009,LTER 1,Fleshy Macroalgae,128,2.56
+2009,LTER 1,Sand,532,10.64
+2009,LTER 1,Turf/Cyanobacteria,2684,53.68
+2009,LTER 2,Coral,1240,24.8
+2009,LTER 2,Crustose Corallines,152,3.04
+2009,LTER 2,Fleshy Macroalgae,644,12.88
+2009,LTER 2,Sand,824,16.48
+2009,LTER 2,Turf/Cyanobacteria,2140,42.8
+2009,LTER 3,Coral,1320,26.4
+2009,LTER 3,Crustose Corallines,64,1.28
+2009,LTER 3,Fleshy Macroalgae,128,2.56
+2009,LTER 3,Sand,1376,27.52
+2009,LTER 3,Turf/Cyanobacteria,2112,42.24
+2009,LTER 4,Coral,1272,25.44
+2009,LTER 4,Crustose Corallines,40,0.8
+2009,LTER 4,Fleshy Macroalgae,40,0.8
+2009,LTER 4,Sand,564,11.28
+2009,LTER 4,Turf/Cyanobacteria,3084,61.68
+2009,LTER 5,Coral,1448,28.96
+2009,LTER 5,Crustose Corallines,112,2.24
+2009,LTER 5,Fleshy Macroalgae,212,4.24
+2009,LTER 5,Sand,1292,25.84
+2009,LTER 5,Turf/Cyanobacteria,1936,38.72
+2009,LTER 6,Coral,952,19.04
+2009,LTER 6,Crustose Corallines,156,3.12
+2009,LTER 6,Fleshy Macroalgae,88,1.76
+2009,LTER 6,Sand,1424,28.48
+2009,LTER 6,Turf/Cyanobacteria,2380,47.6
+2010,LTER 1,Coral,1080,21.6
+2010,LTER 1,Crustose Corallines,644,12.88
+2010,LTER 1,Fleshy Macroalgae,100,2
+2010,LTER 1,Sand,428,8.56
+2010,LTER 1,Turf/Cyanobacteria,2748,54.96
+2010,LTER 2,Coral,1004,20.08
+2010,LTER 2,Crustose Corallines,236,4.72
+2010,LTER 2,Fleshy Macroalgae,720,14.4
+2010,LTER 2,Sand,844,16.88
+2010,LTER 2,Turf/Cyanobacteria,2196,43.92
+2010,LTER 3,Coral,1720,34.4
+2010,LTER 3,Crustose Corallines,88,1.76
+2010,LTER 3,Fleshy Macroalgae,228,4.56
+2010,LTER 3,Sand,764,15.28
+2010,LTER 3,Turf/Cyanobacteria,2200,44
+2010,LTER 4,Coral,1304,26.08
+2010,LTER 4,Crustose Corallines,60,1.2
+2010,LTER 4,Fleshy Macroalgae,40,0.8
+2010,LTER 4,Sand,887,17.74
+2010,LTER 4,Turf/Cyanobacteria,2608,52.16
+2010,LTER 5,Coral,1396,27.92
+2010,LTER 5,Crustose Corallines,116,2.32
+2010,LTER 5,Fleshy Macroalgae,156,3.12
+2010,LTER 5,Sand,1236,24.72
+2010,LTER 5,Turf/Cyanobacteria,2096,41.92
+2010,LTER 6,Coral,1216,24.32
+2010,LTER 6,Crustose Corallines,292,5.84
+2010,LTER 6,Fleshy Macroalgae,152,3.04
+2010,LTER 6,Sand,1432,28.64
+2010,LTER 6,Turf/Cyanobacteria,1908,38.16
+2011,LTER 1,Coral,872,17.44
+2011,LTER 1,Crustose Corallines,724,14.48
+2011,LTER 1,Fleshy Macroalgae,352,7.04
+2011,LTER 1,Sand,480,9.6
+2011,LTER 1,Turf/Cyanobacteria,2572,51.44
+2011,LTER 2,Coral,872,17.44
+2011,LTER 2,Crustose Corallines,188,3.76
+2011,LTER 2,Fleshy Macroalgae,952,19.04
+2011,LTER 2,Sand,716,14.32
+2011,LTER 2,Turf/Cyanobacteria,2272,45.44
+2011,LTER 3,Coral,1664,33.28
+2011,LTER 3,Crustose Corallines,92,1.84
+2011,LTER 3,Fleshy Macroalgae,484,9.68
+2011,LTER 3,Sand,1196,23.92
+2011,LTER 3,Turf/Cyanobacteria,1564,31.28
+2011,LTER 4,Coral,1668,33.36
+2011,LTER 4,Crustose Corallines,64,1.28
+2011,LTER 4,Fleshy Macroalgae,128,2.56
+2011,LTER 4,Sand,812,16.24
+2011,LTER 4,Turf/Cyanobacteria,2328,46.56
+2011,LTER 5,Coral,1196,23.92
+2011,LTER 5,Crustose Corallines,104,2.08
+2011,LTER 5,Fleshy Macroalgae,160,3.2
+2011,LTER 5,Sand,1664,33.28
+2011,LTER 5,Turf/Cyanobacteria,1876,37.52
+2011,LTER 6,Coral,1132,22.64
+2011,LTER 6,Crustose Corallines,104,2.08
+2011,LTER 6,Fleshy Macroalgae,192,3.84
+2011,LTER 6,Sand,1640,32.8
+2011,LTER 6,Turf/Cyanobacteria,1932,38.64
+2012,LTER 1,Coral,600,12
+2012,LTER 1,Crustose Corallines,724,14.48
+2012,LTER 1,Fleshy Macroalgae,612,12.24
+2012,LTER 1,Sand,572,11.44
+2012,LTER 1,Turf/Cyanobacteria,2492,49.84
+2012,LTER 2,Coral,644,12.88
+2012,LTER 2,Crustose Corallines,248,4.96
+2012,LTER 2,Fleshy Macroalgae,912,18.24
+2012,LTER 2,Sand,656,13.12
+2012,LTER 2,Turf/Cyanobacteria,2540,50.8
+2012,LTER 3,Coral,1564,31.28
+2012,LTER 3,Crustose Corallines,112,2.24
+2012,LTER 3,Fleshy Macroalgae,636,12.72
+2012,LTER 3,Sand,1088,21.76
+2012,LTER 3,Turf/Cyanobacteria,1600,32
+2012,LTER 4,Coral,1408,28.16
+2012,LTER 4,Crustose Corallines,160,3.2
+2012,LTER 4,Fleshy Macroalgae,164,3.28
+2012,LTER 4,Sand,580,11.6
+2012,LTER 4,Turf/Cyanobacteria,2688,53.76
+2012,LTER 5,Coral,1148,22.96
+2012,LTER 5,Crustose Corallines,156,3.12
+2012,LTER 5,Fleshy Macroalgae,140,2.8
+2012,LTER 5,Sand,1788,35.76
+2012,LTER 5,Turf/Cyanobacteria,1768,35.36
+2012,LTER 6,Coral,1128,22.56
+2012,LTER 6,Crustose Corallines,228,4.56
+2012,LTER 6,Fleshy Macroalgae,112,2.24
+2012,LTER 6,Sand,1568,31.36
+2012,LTER 6,Turf/Cyanobacteria,1964,39.28
+2013,LTER 1,Coral,528,10.56
+2013,LTER 1,Crustose Corallines,580,11.6
+2013,LTER 1,Fleshy Macroalgae,888,17.76
+2013,LTER 1,Sand,496,9.92
+2013,LTER 1,Turf/Cyanobacteria,2508,50.16
+2013,LTER 2,Coral,432,8.64
+2013,LTER 2,Crustose Corallines,212,4.24
+2013,LTER 2,Fleshy Macroalgae,1128,22.56
+2013,LTER 2,Sand,736,14.72
+2013,LTER 2,Turf/Cyanobacteria,2492,49.84
+2013,LTER 3,Coral,1136,22.72
+2013,LTER 3,Crustose Corallines,220,4.4
+2013,LTER 3,Fleshy Macroalgae,676,13.52
+2013,LTER 3,Sand,1028,20.56
+2013,LTER 3,Turf/Cyanobacteria,1940,38.8
+2013,LTER 4,Coral,1616,32.32
+2013,LTER 4,Crustose Corallines,80,1.6
+2013,LTER 4,Fleshy Macroalgae,96,1.92
+2013,LTER 4,Sand,640,12.8
+2013,LTER 4,Turf/Cyanobacteria,2568,51.36
+2013,LTER 5,Coral,1160,23.2
+2013,LTER 5,Crustose Corallines,132,2.64
+2013,LTER 5,Fleshy Macroalgae,116,2.32
+2013,LTER 5,Sand,1848,36.96
+2013,LTER 5,Turf/Cyanobacteria,1744,34.88
+2013,LTER 6,Coral,1140,22.8
+2013,LTER 6,Crustose Corallines,260,5.2
+2013,LTER 6,Fleshy Macroalgae,44,0.88
+2013,LTER 6,Sand,1564,31.28
+2013,LTER 6,Turf/Cyanobacteria,1992,39.84
+2014,LTER 1,Coral,364,7.28
+2014,LTER 1,Crustose Corallines,472,9.44
+2014,LTER 1,Fleshy Macroalgae,1096,21.92
+2014,LTER 1,Sand,580,11.6
+2014,LTER 1,Turf/Cyanobacteria,2488,49.76
+2014,LTER 2,Coral,276,5.52
+2014,LTER 2,Crustose Corallines,292,5.84
+2014,LTER 2,Fleshy Macroalgae,1336,26.72
+2014,LTER 2,Sand,1196,23.92
+2014,LTER 2,Turf/Cyanobacteria,1900,38
+2014,LTER 3,Coral,700,14
+2014,LTER 3,Crustose Corallines,88,1.76
+2014,LTER 3,Fleshy Macroalgae,1208,24.16
+2014,LTER 3,Sand,980,19.6
+2014,LTER 3,Turf/Cyanobacteria,2024,40.48
+2014,LTER 4,Coral,1400,28
+2014,LTER 4,Crustose Corallines,72,1.44
+2014,LTER 4,Fleshy Macroalgae,256,5.12
+2014,LTER 4,Sand,700,14
+2014,LTER 4,Turf/Cyanobacteria,2572,51.44
+2014,LTER 5,Coral,1152,23.04
+2014,LTER 5,Crustose Corallines,180,3.6
+2014,LTER 5,Fleshy Macroalgae,108,2.16
+2014,LTER 5,Sand,2048,40.96
+2014,LTER 5,Turf/Cyanobacteria,1512,30.24
+2014,LTER 6,Coral,1120,22.4
+2014,LTER 6,Crustose Corallines,240,4.8
+2014,LTER 6,Fleshy Macroalgae,40,0.8
+2014,LTER 6,Sand,1956,39.12
+2014,LTER 6,Turf/Cyanobacteria,1644,32.88
+2015,LTER 1,Coral,224,4.48
+2015,LTER 1,Crustose Corallines,384,7.68
+2015,LTER 1,Fleshy Macroalgae,1556,31.12
+2015,LTER 1,Sand,1272,25.44
+2015,LTER 1,Turf/Cyanobacteria,1564,31.28
+2015,LTER 2,Coral,116,2.32
+2015,LTER 2,Crustose Corallines,40,0.8
+2015,LTER 2,Fleshy Macroalgae,1268,25.36
+2015,LTER 2,Sand,1220,24.4
+2015,LTER 2,Turf/Cyanobacteria,2356,47.12
+2015,LTER 3,Coral,628,12.56
+2015,LTER 3,Crustose Corallines,84,1.68
+2015,LTER 3,Fleshy Macroalgae,1264,25.28
+2015,LTER 3,Sand,1244,24.88
+2015,LTER 3,Turf/Cyanobacteria,1780,35.6
+2015,LTER 4,Coral,1280,25.6
+2015,LTER 4,Crustose Corallines,12,0.24
+2015,LTER 4,Fleshy Macroalgae,368,7.36
+2015,LTER 4,Sand,1360,27.2
+2015,LTER 4,Turf/Cyanobacteria,1980,39.6
+2015,LTER 5,Coral,1036,20.72
+2015,LTER 5,Crustose Corallines,80,1.6
+2015,LTER 5,Fleshy Macroalgae,312,6.24
+2015,LTER 5,Sand,1868,37.36
+2015,LTER 5,Turf/Cyanobacteria,1704,34.08
+2015,LTER 6,Coral,1168,23.36
+2015,LTER 6,Crustose Corallines,44,0.88
+2015,LTER 6,Fleshy Macroalgae,68,1.36
+2015,LTER 6,Sand,1616,32.32
+2015,LTER 6,Turf/Cyanobacteria,2104,42.08
+2016,LTER 1,Coral,232,4.64
+2016,LTER 1,Crustose Corallines,336,6.72
+2016,LTER 1,Fleshy Macroalgae,1956,39.12
+2016,LTER 1,Sand,1220,24.4
+2016,LTER 1,Turf/Cyanobacteria,1256,25.12
+2016,LTER 2,Coral,60,1.2
+2016,LTER 2,Crustose Corallines,40,0.8
+2016,LTER 2,Fleshy Macroalgae,1880,37.6
+2016,LTER 2,Sand,1400,28
+2016,LTER 2,Turf/Cyanobacteria,1620,32.4
+2016,LTER 3,Coral,592,11.84
+2016,LTER 3,Crustose Corallines,116,2.32
+2016,LTER 3,Fleshy Macroalgae,1340,26.8
+2016,LTER 3,Sand,1280,25.6
+2016,LTER 3,Turf/Cyanobacteria,1672,33.44
+2016,LTER 4,Coral,1188,23.76
+2016,LTER 4,Crustose Corallines,64,1.28
+2016,LTER 4,Fleshy Macroalgae,960,19.2
+2016,LTER 4,Sand,780,15.6
+2016,LTER 4,Turf/Cyanobacteria,2008,40.16
+2016,LTER 5,Coral,1092,21.84
+2016,LTER 5,Crustose Corallines,44,0.88
+2016,LTER 5,Fleshy Macroalgae,228,4.56
+2016,LTER 5,Sand,2144,42.88
+2016,LTER 5,Turf/Cyanobacteria,1492,29.84
+2016,LTER 6,Coral,1056,21.12
+2016,LTER 6,Crustose Corallines,44,0.88
+2016,LTER 6,Fleshy Macroalgae,92,1.84
+2016,LTER 6,Sand,2248,44.96
+2016,LTER 6,Turf/Cyanobacteria,1560,31.2
+2017,LTER 1,Coral,252,5.04
+2017,LTER 1,Crustose Corallines,868,17.36
+2017,LTER 1,Fleshy Macroalgae,1036,20.72
+2017,LTER 1,Sand,1452,29.04
+2017,LTER 1,Turf/Cyanobacteria,1392,27.84
+2017,LTER 2,Coral,24,0.48
+2017,LTER 2,Crustose Corallines,176,3.52
+2017,LTER 2,Fleshy Macroalgae,1672,33.44
+2017,LTER 2,Sand,1028,20.56
+2017,LTER 2,Turf/Cyanobacteria,2100,42
+2017,LTER 3,Coral,540,10.8
+2017,LTER 3,Crustose Corallines,84,1.68
+2017,LTER 3,Fleshy Macroalgae,472,9.44
+2017,LTER 3,Sand,808,16.16
+2017,LTER 3,Turf/Cyanobacteria,3096,61.92
+2017,LTER 4,Coral,1204,24.08
+2017,LTER 4,Crustose Corallines,208,4.16
+2017,LTER 4,Fleshy Macroalgae,268,5.36
+2017,LTER 4,Sand,428,8.56
+2017,LTER 4,Turf/Cyanobacteria,2892,57.84
+2017,LTER 5,Coral,1208,24.16
+2017,LTER 5,Crustose Corallines,28,0.56
+2017,LTER 5,Fleshy Macroalgae,112,2.24
+2017,LTER 5,Sand,1872,37.44
+2017,LTER 5,Turf/Cyanobacteria,1780,35.6
+2017,LTER 6,Coral,1420,28.4
+2017,LTER 6,Crustose Corallines,16,0.32
+2017,LTER 6,Fleshy Macroalgae,40,0.8
+2017,LTER 6,Sand,1292,25.84
+2017,LTER 6,Turf/Cyanobacteria,2232,44.64
+2018,LTER 1,Coral,284,5.68
+2018,LTER 1,Crustose Corallines,536,10.72
+2018,LTER 1,Fleshy Macroalgae,912,18.24
+2018,LTER 1,Sand,508,10.16
+2018,LTER 1,Turf/Cyanobacteria,2760,55.2
+2018,LTER 2,Coral,12,0.24
+2018,LTER 2,Crustose Corallines,64,1.28
+2018,LTER 2,Fleshy Macroalgae,2032,40.64
+2018,LTER 2,Sand,1224,24.48
+2018,LTER 2,Turf/Cyanobacteria,1668,33.36
+2018,LTER 3,Coral,420,8.4
+2018,LTER 3,Crustose Corallines,0,0
+2018,LTER 3,Fleshy Macroalgae,544,10.88
+2018,LTER 3,Sand,1476,29.52
+2018,LTER 3,Turf/Cyanobacteria,2560,51.2
+2018,LTER 4,Coral,1220,24.4
+2018,LTER 4,Crustose Corallines,152,3.04
+2018,LTER 4,Fleshy Macroalgae,200,4
+2018,LTER 4,Sand,404,8.08
+2018,LTER 4,Turf/Cyanobacteria,3024,60.48
+2018,LTER 5,Coral,1208,24.16
+2018,LTER 5,Crustose Corallines,92,1.84
+2018,LTER 5,Fleshy Macroalgae,148,2.96
+2018,LTER 5,Sand,1824,36.48
+2018,LTER 5,Turf/Cyanobacteria,1728,34.56
+2018,LTER 6,Coral,1304,26.08
+2018,LTER 6,Crustose Corallines,32,0.64
+2018,LTER 6,Fleshy Macroalgae,72,1.44
+2018,LTER 6,Sand,1448,28.96
+2018,LTER 6,Turf/Cyanobacteria,2144,42.88
+2019,LTER 1,Coral,284,5.68
+2019,LTER 1,Crustose Corallines,20,0.4
+2019,LTER 1,Fleshy Macroalgae,1312,26.24
+2019,LTER 1,Sand,1256,25.12
+2019,LTER 1,Turf/Cyanobacteria,2116,42.32
+2019,LTER 2,Coral,24,0.48
+2019,LTER 2,Crustose Corallines,32,0.64
+2019,LTER 2,Fleshy Macroalgae,1524,30.48
+2019,LTER 2,Sand,1740,34.8
+2019,LTER 2,Turf/Cyanobacteria,1680,33.6
+2019,LTER 3,Coral,492,9.84
+2019,LTER 3,Crustose Corallines,36,0.72
+2019,LTER 3,Fleshy Macroalgae,644,12.88
+2019,LTER 3,Sand,1016,20.32
+2019,LTER 3,Turf/Cyanobacteria,2812,56.24
+2019,LTER 4,Coral,1336,26.72
+2019,LTER 4,Crustose Corallines,12,0.24
+2019,LTER 4,Fleshy Macroalgae,340,6.8
+2019,LTER 4,Sand,536,10.72
+2019,LTER 4,Turf/Cyanobacteria,2776,55.52
+2019,LTER 5,Coral,1256,25.12
+2019,LTER 5,Crustose Corallines,4,0.08
+2019,LTER 5,Fleshy Macroalgae,116,2.32
+2019,LTER 5,Sand,1972,39.44
+2019,LTER 5,Turf/Cyanobacteria,1652,33.04
+2019,LTER 6,Coral,1048,20.96
+2019,LTER 6,Crustose Corallines,4,0.08
+2019,LTER 6,Fleshy Macroalgae,32,0.64
+2019,LTER 6,Sand,1924,38.48
+2019,LTER 6,Turf/Cyanobacteria,1992,39.84
+2020,LTER 1,Coral,254,5.08
+2020,LTER 1,Crustose Corallines,74,1.48
+2020,LTER 1,Fleshy Macroalgae,1272,25.44
+2020,LTER 1,Sand,988,19.76
+2020,LTER 1,Turf/Cyanobacteria,2406,48.12
+2020,LTER 2,Coral,28,0.56
+2020,LTER 2,Crustose Corallines,76,1.52
+2020,LTER 2,Fleshy Macroalgae,1642,32.84
+2020,LTER 2,Sand,1658,33.16
+2020,LTER 2,Turf/Cyanobacteria,1596,31.92
+2020,LTER 3,Coral,674,13.48
+2020,LTER 3,Crustose Corallines,22,0.44
+2020,LTER 3,Fleshy Macroalgae,522,10.44
+2020,LTER 3,Sand,1010,20.2
+2020,LTER 3,Turf/Cyanobacteria,2738,54.76
+2020,LTER 4,Coral,1718,34.36
+2020,LTER 4,Crustose Corallines,8,0.16
+2020,LTER 4,Fleshy Macroalgae,424,8.48
+2020,LTER 4,Sand,456,9.12
+2020,LTER 4,Turf/Cyanobacteria,2392,47.84
+2020,LTER 5,Coral,1294,25.88
+2020,LTER 5,Crustose Corallines,2,0.04
+2020,LTER 5,Fleshy Macroalgae,166,3.32
+2020,LTER 5,Sand,1274,25.48
+2020,LTER 5,Turf/Cyanobacteria,2258,45.16
+2020,LTER 6,Coral,1174,23.48
+2020,LTER 6,Crustose Corallines,4,0.08
+2020,LTER 6,Fleshy Macroalgae,28,0.56
+2020,LTER 6,Sand,1468,29.36
+2020,LTER 6,Turf/Cyanobacteria,2294,45.88
+2021,LTER 1,Coral,224,4.48
+2021,LTER 1,Crustose Corallines,128,2.56
+2021,LTER 1,Fleshy Macroalgae,1232,24.64
+2021,LTER 1,Sand,720,14.4
+2021,LTER 1,Turf/Cyanobacteria,2696,53.92
+2021,LTER 2,Coral,32,0.64
+2021,LTER 2,Crustose Corallines,120,2.4
+2021,LTER 2,Fleshy Macroalgae,1760,35.2
+2021,LTER 2,Sand,1576,31.52
+2021,LTER 2,Turf/Cyanobacteria,1512,30.24
+2021,LTER 3,Coral,856,17.12
+2021,LTER 3,Crustose Corallines,8,0.16
+2021,LTER 3,Fleshy Macroalgae,464,9.28
+2021,LTER 3,Sand,1004,20.08
+2021,LTER 3,Turf/Cyanobacteria,2668,53.36
+2021,LTER 4,Coral,2100,42
+2021,LTER 4,Crustose Corallines,4,0.08
+2021,LTER 4,Fleshy Macroalgae,508,10.16
+2021,LTER 4,Sand,376,7.52
+2021,LTER 4,Turf/Cyanobacteria,2008,40.16
+2021,LTER 5,Coral,1332,26.64
+2021,LTER 5,Fleshy Macroalgae,228,4.56
+2021,LTER 5,Sand,576,11.52
+2021,LTER 5,Turf/Cyanobacteria,2864,57.28
+2021,LTER 6,Coral,1300,26
+2021,LTER 6,Crustose Corallines,4,0.08
+2021,LTER 6,Fleshy Macroalgae,96,1.92
+2021,LTER 6,Sand,1012,20.24
+2021,LTER 6,Turf/Cyanobacteria,2592,51.84
+2022,LTER 1,Coral,380,7.6
+2022,LTER 1,Crustose Corallines,20,0.4
+2022,LTER 1,Fleshy Macroalgae,1512,30.24
+2022,LTER 1,Sand,336,6.72
+2022,LTER 1,Turf/Cyanobacteria,2752,55.04
+2022,LTER 2,Coral,160,3.2
+2022,LTER 2,Fleshy Macroalgae,1728,34.56
+2022,LTER 2,Sand,1424,28.48
+2022,LTER 2,Turf/Cyanobacteria,1688,33.76
+2022,LTER 3,Coral,988,19.76
+2022,LTER 3,Crustose Corallines,8,0.16
+2022,LTER 3,Fleshy Macroalgae,488,9.76
+2022,LTER 3,Sand,1200,24
+2022,LTER 3,Turf/Cyanobacteria,2316,46.32
+2022,LTER 4,Coral,1908,38.16
+2022,LTER 4,Crustose Corallines,0,0
+2022,LTER 4,Fleshy Macroalgae,488,9.76
+2022,LTER 4,Sand,196,3.92
+2022,LTER 4,Turf/Cyanobacteria,2408,48.16
+2022,LTER 5,Coral,1256,25.12
+2022,LTER 5,Crustose Corallines,4,0.08
+2022,LTER 5,Fleshy Macroalgae,256,5.12
+2022,LTER 5,Sand,912,18.24
+2022,LTER 5,Turf/Cyanobacteria,2572,51.44
+2022,LTER 6,Coral,1204,24.08
+2022,LTER 6,Fleshy Macroalgae,48,0.96
+2022,LTER 6,Sand,1476,29.52
+2022,LTER 6,Turf/Cyanobacteria,2272,45.44
+2023,LTER 1,Coral,276,5.52
+2023,LTER 1,Crustose Corallines,12,0.24
+2023,LTER 1,Fleshy Macroalgae,1020,20.4
+2023,LTER 1,Sand,204,4.08
+2023,LTER 1,Turf/Cyanobacteria,3488,69.76
+2023,LTER 2,Coral,56,1.12
+2023,LTER 2,Fleshy Macroalgae,656,13.12
+2023,LTER 2,Sand,1840,36.8
+2023,LTER 2,Turf/Cyanobacteria,2448,48.96
+2023,LTER 3,Coral,896,17.92
+2023,LTER 3,Fleshy Macroalgae,336,6.72
+2023,LTER 3,Sand,1240,24.8
+2023,LTER 3,Turf/Cyanobacteria,2528,50.56
+2023,LTER 4,Coral,1812,36.24
+2023,LTER 4,Fleshy Macroalgae,496,9.92
+2023,LTER 4,Sand,300,6
+2023,LTER 4,Turf/Cyanobacteria,2392,47.84
+2023,LTER 5,Coral,1048,20.96
+2023,LTER 5,Crustose Corallines,24,0.48
+2023,LTER 5,Fleshy Macroalgae,244,4.88
+2023,LTER 5,Sand,760,15.2
+2023,LTER 5,Turf/Cyanobacteria,2924,58.48
+2023,LTER 6,Coral,1108,22.16
+2023,LTER 6,Fleshy Macroalgae,72,1.44
+2023,LTER 6,Sand,1216,24.32
+2023,LTER 6,Turf/Cyanobacteria,2604,52.08
+2024,LTER 1,Coral,268,5.36
+2024,LTER 1,Crustose Corallines,20,0.4
+2024,LTER 1,Fleshy Macroalgae,876,17.52
+2024,LTER 1,Sand,440,8.8
+2024,LTER 1,Turf/Cyanobacteria,3396,67.92
+2024,LTER 2,Coral,52,1.04
+2024,LTER 2,Fleshy Macroalgae,1312,26.24
+2024,LTER 2,Sand,1768,35.36
+2024,LTER 2,Turf/Cyanobacteria,1868,37.36
+2024,LTER 3,Coral,836,16.72
+2024,LTER 3,Fleshy Macroalgae,268,5.36
+2024,LTER 3,Sand,1108,22.16
+2024,LTER 3,Turf/Cyanobacteria,2788,55.76
+2024,LTER 4,Coral,1928,38.56
+2024,LTER 4,Fleshy Macroalgae,696,13.92
+2024,LTER 4,Sand,284,5.68
+2024,LTER 4,Turf/Cyanobacteria,2092,41.84
+2024,LTER 5,Coral,1232,24.64
+2024,LTER 5,Fleshy Macroalgae,356,7.12
+2024,LTER 5,Sand,564,11.28
+2024,LTER 5,Turf/Cyanobacteria,2848,56.96
+2024,LTER 6,Coral,1312,26.24
+2024,LTER 6,Fleshy Macroalgae,48,0.96
+2024,LTER 6,Sand,1540,30.8
+2024,LTER 6,Turf/Cyanobacteria,2100,42
+2025,LTER 1,Coral,340,6.8
+2025,LTER 1,Crustose Corallines,16,0.32
+2025,LTER 1,Fleshy Macroalgae,736,14.72
+2025,LTER 1,Sand,504,10.08
+2025,LTER 1,Turf/Cyanobacteria,3404,68.08
+2025,LTER 2,Coral,0,0
+2025,LTER 2,Crustose Corallines,8,0.16
+2025,LTER 2,Fleshy Macroalgae,864,17.28
+2025,LTER 2,Sand,1704,34.08
+2025,LTER 2,Turf/Cyanobacteria,2424,48.48
+2025,LTER 3,Coral,1076,21.52
+2025,LTER 3,Crustose Corallines,4,0.08
+2025,LTER 3,Fleshy Macroalgae,292,5.84
+2025,LTER 3,Sand,1040,20.8
+2025,LTER 3,Turf/Cyanobacteria,2588,51.76
+2025,LTER 4,Coral,1516,30.32
+2025,LTER 4,Crustose Corallines,0,0
+2025,LTER 4,Fleshy Macroalgae,500,10
+2025,LTER 4,Sand,420,8.4
+2025,LTER 4,Turf/Cyanobacteria,2564,51.28
+2025,LTER 5,Coral,1096,21.92
+2025,LTER 5,Crustose Corallines,4,0.08
+2025,LTER 5,Fleshy Macroalgae,212,4.24
+2025,LTER 5,Sand,832,16.64
+2025,LTER 5,Turf/Cyanobacteria,2856,57.12
+2025,LTER 6,Coral,1392,27.84
+2025,LTER 6,Crustose Corallines,0,0
+2025,LTER 6,Fleshy Macroalgae,76,1.52
+2025,LTER 6,Sand,1452,29.04
+2025,LTER 6,Turf/Cyanobacteria,2080,41.6
