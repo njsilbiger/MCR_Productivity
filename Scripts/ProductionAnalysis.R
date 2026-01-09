@@ -505,7 +505,7 @@ bf_nutrients<- bf(
 #bf_temp    <- bf(temperature | mi() ~ 1)
 #bf_flow    <- bf(flow        | mi() ~ 1)
 #bf_coral   <- bf(meancoral       | mi() ~ 1)
-bf_fleshy  <- bf(meanfleshy | mi() ~ 1) # to allow for correlated errors betweeo coral and macroalgae since algae is not a response variable
+bf_fleshy  <- bf(logfleshy | mi() ~ 1) # to allow for correlated errors between coral and macroalgae since algae is not a response variable
 #bf_biomass <- bf(fish     | mi() ~ 1)
 
 # ----------------------------
@@ -782,3 +782,6 @@ cor_res %>%
   geom_tile()+
   scale_fill_gradient(low = "white", high = "pink")+
   theme_minimal()
+
+#lgpmax,lgd
+#lgal,lgflhy
