@@ -33,8 +33,6 @@ library(ggeffects)
 
 ## PP data 
 Year_Averages_PP<-read_csv(here("Data","Year_Averages_PP.csv"))
-## Daily NEC 
-#NEC<-read_csv(here("Data","NEC_daily.csv"))
 
 # Turb %N
 Turb<-read_csv(here("Data","Turb_mean.csv")) 
@@ -55,11 +53,7 @@ fish_trophic<-read_csv(here("Data","fish_summary.csv")) %>%
 ## read in the Benthic data
 Benthic_summary_Algae<-read_csv(here("Data","Benthic_summary_algae.csv"))
 
-
-
-## BringmodN## Bring in the yearly SST data 
-#yearly_sst<-read_csv(here("Data","SST_year.csv"))
-
+############## ANALYSIS #######################
 ## Make a plot of the Benthic Data
 
 myPal <- c(Coral = "#c38370", `Fleshy Macroalgae` = "#9da",
@@ -119,84 +113,18 @@ TotalLiving<-Benthic_summary_Algae %>%
             mean_fleshy = sum(mean_cover[name == "Fleshy Macroalgae"]),
             mean_coral = sum(mean_cover[name == "Coral"]))
 
-# Pete's benthic data which is slightly different than Bob's
-#PeteData<-read_csv(here("Data","PeteCoralCover.csv")) %>%
-#  rename(Year = year)
 
-
-# calculate yearly averages for all the metabolism data
-#### yearly averages
-
-### Make a plot of all living cover (basically everything - sand + coral RUbble and algal turf)
-LTER1_coverliving<-Benthic_summary_Algae %>%
-  filter(name %in% c("Coral","Crustose Corallines","Fleshy Macroalgae"),
-         Site == "LTER 1")%>%
-  group_by(Year)%>%
-  summarise(mean_alive = sum(mean_cover)) %>%
-  ggplot(aes(x = Year, y = mean_alive))+
-  geom_line(linewidth = 1, alpha = 0.2, lty = 2)+
-  geom_point(size = 2)+
-  geom_smooth(method = "lm", color = "black")+
-  scale_y_continuous(limits = c(0,40))+
-  labs(x = "",
-       y = "Cover of living macro-producers (%)",
-       color = "",
-       # title = "LTER 1 only"
-  )+
-  theme_bw()+
-  theme(axis.title = element_text(size = 14),
-        axis.text = element_text(size = 12),
-        panel.grid.minor = element_blank())
-
-LTER1_cover<-Benthic_summary_Algae %>%
-  filter(name %in% c("Coral","Crustose Corallines","Fleshy Macroalgae", "Turf/Cyanobacteria"),
-         Site == "LTER 1")%>%
-  ggplot(aes(x = Year, y = mean_cover, color = name))+
-  geom_point(size = 2)+
-  geom_line(linewidth = 1)+
-  scale_color_manual(values = c("#CC7161","lightpink","darkgreen","lightgreen"))+
-  geom_text(data = tibble(Year = c(2007, 2017, 2015, 2014), 
-                          name = c("Coral","Crustose Corallines","Fleshy Macroalgae", "Turf/Cyanobacteria"), 
-                          mean_cover = c(33,20,0, 54)),
-            aes(x = Year, y = mean_cover, label = name))+
-  labs(x = "",
-       y = "Cover (%)",
-       color = "",
-       #title = "LTER 1 only"
-  )+
-#  scale_y_continuous(limits = c(0,40))+
-  # scale_x_continuous(limits = c(2008, 2025))+
-  theme_bw()+
-  theme(axis.title = element_text(size = 14),
-        axis.text = element_text(size = 12),
-        #     legend.position = c(0.71, 0.9),
-        legend.position = "none",
-        #    legend.background = element_blank(),
-        legend.text = element_text(size = 12),
-        #  axis.text.x = element_blank(),
-        panel.grid.minor = element_blank())
-
-
-#### yearly averages all together
-Year_Averages <- 
-  Year_Averages_PP %>%
+#### yearly averages all together ####
+Year_Averages <-  Year_Averages_PP %>% # production
   full_join(TotalLiving %>%
               filter(Site == "LTER 1")) %>% # Benthic Data
-  full_join(water)%>%
+  full_join(water)%>% # water column N
   full_join(Turb)  %>% # add in the turbinaria data
   full_join(insitu_temp) %>% # read in annual temp data
- # full_join(yearly_sst %>%
-#              select(Year = Year_Benthic, # make year last year because last years temp should affect next years coral cover
-#                     mean_SST, max_SST)
-#            ) %>% # add the SST data
-#  full_join(fish)%>% # bring in the fish biomass data
   full_join(insitu_temp) %>% # bring in the in situ temperature data
- 
   mutate(log_coral = log(mean_coral)) %>% # log transform the coral data
-#  rename(mean_biomass = total_fish_g_m2) %>%
   left_join(fish_trophic) %>%
   filter(Year <2026) %>%
-  #rename(fish_dead_coral = `Benefits from dead coral`)%>%
   arrange(Year)
 
 ### How is everything changing over time ####
@@ -204,13 +132,14 @@ Year_Averages <-
 # create a dataframe of standardized data
 std_data<- Year_Averages %>%
   select(mean_coral, mean_fleshy, Pmax, Rd, 
-        # NEC_mean_Day, mean_SST,mean_biomass,
-         N_percent,
+          N_percent,
         Herbivores, Corallivore, NP_mean, Max_temp, GP_mean, Nitrite_and_Nitrate,
          Phosphate) %>%
   mutate(across(everything(), 
                 ~as.numeric(scale(.x)))) %>%
   bind_cols(Year_Averages %>% select(Year))
+
+## Everything below is a linear model showing standardized change per year
 
 # Coral
 coral_year<-brm(mean_coral~Year, data = std_data)
@@ -224,59 +153,35 @@ posterior_algae <- as_tibble(as.matrix(fleshy_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "% Macroalgae Cover")
 
-# fish biomass
-#fish_year<-brm(mean_biomass~Year, data = std_data)
-#posterior_fish <- as_tibble(as.matrix(fish_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "Total Fish Biomass")
-
 # Corallivore biomass
 Corallivore_year<-brm(Corallivore~Year, data = std_data)
 posterior_Corallivore <- as_tibble(as.matrix(Corallivore_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Corallivore Biomass")
 
-
-# Dead coral fish biomass
+# Herbivore Fish Biomass
 dead_coral_fish_year<-brm(Herbivores~Year, data = std_data)
 posterior_dead_coral_fish <- as_tibble(as.matrix(dead_coral_fish_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Herbivore/bioeroding fish biomass")
 
-# SST
-#SST_year<-brm(mean_SST~Year, data = std_data)
-#posterior_sst <- as_tibble(as.matrix(SST_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "Sea Surface Temperature")
-
+# In situ average daily max temperature
 temp_year<-brm(Max_temp~Year, data = std_data)
 posterior_temp <- as_tibble(as.matrix(temp_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Max Temperature")
 
-# Percent N
+# Percent N tubrinaria
 N_year<-brm(N_percent~Year, data = std_data)
 posterior_N <- as_tibble(as.matrix(N_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "%N Content")
 
-# water N
+# water N + N
 Nwater_year<-brm(Nitrite_and_Nitrate~Year, data = std_data)
 posterior_Nwater <- as_tibble(as.matrix(Nwater_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Nitrate + Nitrite")
-
-# water N
-#Pwater_year<-brm(Phosphate~Year, data = std_data)
-#posterior_Pwater <- as_tibble(as.matrix(Pwater_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "Phosphate")
-
-# Percent C
-#C_year<-brm(N_percent~Year, data = std_data)
-#posterior_C <- as_tibble(as.matrix(C_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "%C Content")
 
 # Rd
 Rd_year<-brm(Rd~Year, data = std_data)
@@ -290,41 +195,24 @@ posterior_Pmax <- as_tibble(as.matrix(Pmax_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Maximum Photosynthetic Capacity")
 
-# NEC
-#NEC_year<-brm(NEC_mean_Day~Year, data = std_data)
-#posterior_NEC <- as_tibble(as.matrix(NEC_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "Net Ecosystem Calcification")
-
 # NEP
 NEP_year<-brm(NP_mean~Year, data = std_data)
 posterior_NEP <- as_tibble(as.matrix(NEP_year)) %>%
   select(Year = b_Year)%>%
   mutate(Parameter = "Net Ecosystem Production")
 
-# GP
-#GP_year<-brm(GP_mean~Year, data = std_data)
-#posterior_GP <- as_tibble(as.matrix(GP_year)) %>%
-#  select(Year = b_Year)%>%
-#  mutate(Parameter = "Gross Ecosystem Production")
 
 # Bring together all the posterior data
 All_posterior<-bind_rows(posterior_coral,
                          posterior_algae,
-                         #posterior_fish,
                          posterior_Corallivore,
                          posterior_dead_coral_fish,
                          posterior_N,
                          posterior_Rd,
                          posterior_Pmax,
-                         #posterior_sst,
-                         #posterior_NEC,
                          posterior_NEP,
-                        # posterior_C,
                          posterior_temp,
-                        # posterior_GP,
-                         posterior_Nwater,
-                       #  posterior_Pwater
+                         posterior_Nwater
                         )
 
 # make a plot showing the change in each parameter over time
@@ -335,8 +223,8 @@ npg_colors <- pal_npg("nrc")(10) # Default NPG palette has 10 colors
 # This will interpolate between the existing NPG colors to generate an 11th color
 npg_extended_palette_function <- colorRampPalette(npg_colors)
 
-# Generate 11 colors from the extended palette
-npg_11_colors <- npg_extended_palette_function(12)
+# Generate 10 colors from the extended palette
+npg_11_colors <- npg_extended_palette_function(10)
 
 All_posterior %>%
   ggplot(aes(x = Year, y = fct_reorder(Parameter, Year, mean), 
