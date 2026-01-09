@@ -464,13 +464,14 @@ bf_coraltemp <- bf(
 # LEVEL 2: Metabolic Rate Models
 # GPP/Pmax is driven by the producers (corals, algae) and temperature
 bf_logpmax <- bf(
-  logpmax | mi() ~ 1 +logproducers+ mi(temperature)
+  #logpmax | mi() ~ 1 +logproducers+ mi(temperature)
+  logpmax | mi() ~ 1 +logcoral+ mi(temperature)
 )
 
 # ER is driven by corals as mixotrophs and abiotic factors 
 
 bf_logrd <- bf(
-  logrd | mi() ~ 1 +logcoral+ mi(temperature)
+  logrd | mi() ~ 1 +logcoral+ mi(temperature) #+mi(logpmax)
 )
 # Community models: Bottom up macroalgae drives herbivore biomass
 bf_herbs <- bf(
@@ -481,6 +482,10 @@ bf_herbs <- bf(
 bf_corallivore <- bf(
   Corallivore | mi() ~ 1 +logcoral
 )
+
+# coral cover drives fleshy algae
+bf_fleshy  <- bf(
+  logfleshy | mi() ~ logcoral)
 
 
 # LEVEL 3: Ecosystem Function Models (Original Hypotheses)
@@ -505,7 +510,7 @@ bf_nutrients<- bf(
 #bf_temp    <- bf(temperature | mi() ~ 1)
 #bf_flow    <- bf(flow        | mi() ~ 1)
 #bf_coral   <- bf(meancoral       | mi() ~ 1)
-bf_fleshy  <- bf(logfleshy | mi() ~ 1) # to allow for correlated errors between coral and macroalgae since algae is not a response variable
+#bf_fleshy  <- bf(logfleshy | mi() ~ 1) # to allow for correlated errors between coral and macroalgae since algae is not a response variable
 #bf_biomass <- bf(fish     | mi() ~ 1)
 
 # ----------------------------
@@ -541,8 +546,10 @@ pp_check(brms_sem_full, resp = "logrd", ndraws = 100)
 # plot all the posteriors
 brms_sem_full %>%
   spread_draws(`b.*`, regex = TRUE) %>%
-  select(b_temperature_Year, b_logpmax_logproducers, #b_logpmax_logcoral,
+  select(b_temperature_Year, #bsp_logrd_milogpmax,#b_logpmax_logproducers, 
+         b_logpmax_logcoral,
          b_logrd_logcoral,b_herbs_logfleshy,
+         b_logfleshy_logcoral,
          b_Corallivore_logcoral, bsp_logcoral_mitemperature, bsp_logpmax_mitemperature,
          bsp_logrd_mitemperature, bsp_Npercent_milogrd) %>%
   pivot_longer(cols = b_temperature_Year:bsp_Npercent_milogrd)%>%
@@ -704,6 +711,23 @@ cc_plot<-as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) %>%
   labs(y = expression(atop("Corallivore Fish Biomass", "(g m "^-1*")")),
        x = "Coral Cover (%)")
 
+# Fleshy algae ~ corals
+fleshy_coral<-conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral") 
+fc_plot<-as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) %>%
+  mutate(logcoral = exp(logcoral *modelsd$logcoral +modelmean$logcoral ),
+         estimate__ = exp(estimate__*modelsd$logfleshy+modelmean$logfleshy),
+         lower__ = exp(lower__*modelsd$logfleshy+modelmean$logfleshy),
+         upper__ = exp(upper__*modelsd$logfleshy+modelmean$logfleshy )) %>% # unscale the data
+  ggplot(aes(x = logcoral , y = estimate__))+
+  geom_line(linewidth = 1)+
+  geom_ribbon(aes(ymin =lower__, ymax =  upper__), alpha = 0.25, fill = "#67bed9")+
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), alpha = 0.5)+
+  coord_trans(x = "log",
+              y = "log")+
+  # scale_y_continuous(breaks = c(1,5,10,20,50,100))+
+  labs(y = expression(atop("Fleshy Macroalgae Cover", "(%)")),
+       x = "Coral Cover (%)")
+
 # N% ~ respiration
 N_Rd<-conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd") 
 nr_plot<-as_tibble(N_Rd$Npercent.Npercent_logrd) %>%
@@ -720,8 +744,11 @@ nr_plot<-as_tibble(N_Rd$Npercent.Npercent_logrd) %>%
   labs(x = expression("Ecosystem Respiration (mmol O"[2]*" m"^2*" hr"^-1*")"),
        y = expression(atop("Nitrogen Content", "(%)")))
 
-nr_plot/rc_plot/hf_plot/cc_plot/ct_plot/ty_plot
-ggsave(here("Output","RegressionSEMplots.pdf"), height = 16, width = 5, device = cairo_pdf)
+
+(((plot_spacer()|nr_plot|plot_spacer())+plot_layout(widths = c(1,2,1)))/((plot_spacer()|rc_plot|plot_spacer())+plot_layout(widths = c(1,2,1)))/(cc_plot|hf_plot)/(ct_plot|fc_plot)/(((plot_spacer()|ty_plot|plot_spacer()))+
+    plot_layout(widths = c(1,2,1))))+plot_annotation(tag_levels = "a")
+
+ggsave(here("Output","RegressionSEMplots.pdf"), height = 12, width = 8, device = cairo_pdf)
 
 ######### Standardarized effect size plot 
 gp_edges<-as_tibble(fixef(brms_sem_full)) %>%
@@ -732,15 +759,16 @@ gp_edges<-as_tibble(fixef(brms_sem_full)) %>%
   mutate(sig = ifelse(sign(lo)==sign(hi),1,0.5))  %>% # determine significance
   mutate(resp = case_when( 
     resp == "temperature" ~"Temperature",
-    resp == "logpmax"~"Ecosystem Pmax Rate",
-    resp == "logrd"~"Ecosystem Rd Rate",
-    resp == "herbs" ~ "Herbivorous Fish Biomass" ,
-    resp == "Corallivore" ~ "Corallivore Fish Biomass" ,
-    resp == "logcoral"~ "Coral Cover",
+    resp == "logfleshy"~ "Fleshy Macroalgae",
+    resp == "logpmax"~"Ecosystem Pmax",
+    resp == "logrd"~"Ecosystem Rd",
+    resp == "herbs" ~ "Herbivorous Fish" ,
+    resp == "Corallivore" ~ "Corallivore Fish" ,
+    resp == "logcoral"~ "Coral",
     resp == "Npercent" ~"N stock")) %>% 
-  mutate(resp = factor(resp, c("Temperature","Coral Cover","Herbivorous Fish Biomass",
-                               "Corallivore Fish Biomass", "Ecosystem Rd Rate",
-                               "Ecosystem Pmax Rate","N stock"))) %>%
+  mutate(resp = factor(resp, c("Temperature","Coral","Fleshy Macroalgae","Herbivorous Fish",
+                               "Corallivore Fish", "Ecosystem Rd",
+                               "Ecosystem Pmax","N stock"))) %>%
   mutate(pred = case_when( 
     pred == "mitemperature" ~"Temperature",
     pred == "logproducers"~"Total Producer Cover",
@@ -767,7 +795,7 @@ gp_edges %>%
         strip.text = element_text(size = 14),
         legend.position = "none")
 
-ggsave(here("Output","SEMCoeffs.pdf"), height = 6, width = 20, device = cairo_pdf)
+ggsave(here("Output","SEMCoeffs.pdf"), height = 6, width = 15, device = cairo_pdf)
 
 ## get the correlated errors
 a<-summary(brms_sem_full) 
@@ -783,5 +811,56 @@ cor_res %>%
   scale_fill_gradient(low = "white", high = "pink")+
   theme_minimal()
 
+
 #lgpmax,lgd
 #lgal,lgflhy
+
+
+# Make Predictions for different years
+test_years<-c(2010,2020,2030,2040,2050)
+test_years_scale<-(test_years-modelmean$Year)/modelsd$Year
+
+# hindcast values 
+hind_values<-Year_Averages %>%
+  filter(Year %in% c(2010,2020))
+
+# Predict the temperature in past and future years/hindcast and forcast
+new_data <- data.frame(Year = test_years_scale)
+pred_new <- posterior_predict(brms_sem_full, newdata = new_data, resp = "temperature")
+
+#convert back to temperature
+Temp_pred_plot<-as_tibble(pred_new*modelsd$temperature+modelmean$temperature) %>%
+  pivot_longer(cols = V1:V5) %>%
+  mutate(year = case_when(name == "V1" ~"2010",
+                          name == "V2" ~"2020",
+                          name == "V3" ~"2030",
+                          name == "V4" ~"2040",
+                          name == "V5" ~"2050")) %>%
+  ggplot(aes(y = value, x = year))+
+  stat_halfeye(point_interval=mean_hdi, .width=c(.95, .75), 
+               fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73",0.6))+
+  geom_point(data = hind_values, aes(x = as.character(Year), y = Max_temp), 
+             size = 4, color = "firebrick", position = position_dodge2(width = 1))+
+  labs(x = "Year",
+       y = "Predicted Average Daily Max Temperature "~degree~"C")+
+  lims(y = c(28,33))
+
+## Take the predicted temperature from each year and calculate predicted coral cover
+newdata_temp<-data.frame(temperature = colMeans(pred_new)) 
+pred_new_coral <- posterior_predict(brms_sem_full, newdata = newdata_temp, resp = "logcoral")
+
+Coral_pred_plot<-exp(as_tibble(pred_new_coral*modelsd$logcoral+modelmean$logcoral)) %>%
+  pivot_longer(cols = V1:V5) %>%
+  mutate(year = case_when(name == "V1" ~"2010",
+                          name == "V2" ~"2020",
+                          name == "V3" ~"2030",
+                          name == "V4" ~"2040",
+                          name == "V5" ~"2050")) %>%
+  ggplot(aes(y = value, x = year))+
+  stat_halfeye(point_interval=mean_hdi, .width=c(.95, .75), 
+               fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73",0.6))+
+  geom_point(data = hind_values, aes(x = as.character(Year), y = mean_coral), 
+             size = 4, color = "firebrick", position = position_dodge2(width = 1))+
+  labs(x = "Year",
+       y = "Coral Cover (%)")+
+  lims(y = c(0,50))
