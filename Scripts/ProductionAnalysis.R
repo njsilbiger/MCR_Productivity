@@ -427,8 +427,8 @@ semdata2<-Year_Averages %>%
           #logfish = log(mean_biomass),
           logrd = log(Rd),
           logpmax = log(Pmax),
-          logproducers = log(mean_alive) # total producers
-          )%>%
+          logproducers = log(mean_alive), # total producers
+          N_percent = log(N_percent))%>%
   select(Year,meancoral = mean_coral, 
          logproducers,
          meanfleshy = mean_fleshy,
@@ -457,9 +457,12 @@ bf_temp <- bf(
   temperature | mi() ~ 1 + Year
 )
 # temp drives coral cover
-bf_coraltemp <- bf(
-  logcoral | mi() ~ 1 + mi(temperature)
+bf_coraltemp <- bf( ### need to play with this because s makes a U and makes future predictions terrible
+  logcoral | trunc(ub = 3.39)  ~ 1 + mi(temperature) +temperature^2#+t2(Year)
 )
+## need to set the upper bound to be 100%
+#(log(100)-modelmean$logcoral)/modelsd$logcoral
+# 3.39
 
 # LEVEL 2: Metabolic Rate Models
 # GPP/Pmax is driven by the producers (corals, algae) and temperature
@@ -485,8 +488,8 @@ bf_corallivore <- bf(
 
 # coral cover drives fleshy algae
 bf_fleshy  <- bf(
-  logfleshy | mi() ~ logcoral)
-
+  logfleshy | trunc(ub = 2.26) ~ logcoral)
+# (log(100)-modelmean$logfleshy)/modelsd$logfleshy
 
 # LEVEL 3: Ecosystem Function Models (Original Hypotheses)
 # Nutrient recycling is driven by mean coral cover to Rd
@@ -517,8 +520,8 @@ bf_nutrients<- bf(
 # Fit
 # ----------------------------
 brms_sem_full <- brm(
-  bf_temp+bf_coraltemp+bf_logpmax + bf_logrd + bf_herbs +bf_corallivore+bf_nutrients + bf_fleshy+
-  set_rescor(TRUE),             # residual correlations among responses
+  bf_temp+bf_coraltemp+bf_logpmax + bf_logrd + bf_herbs +bf_corallivore+bf_nutrients + bf_fleshy +
+  set_rescor(FALSE),             # residual correlations among responses
   data = semdata2,
   chains = 3,
   iter = 10000,
@@ -526,6 +529,7 @@ brms_sem_full <- brm(
   seed = 11,
   sample_prior = "no",
   prior = c(set_prior("normal(0, 2)", class = "b"),
+            #set_prior("normal(0, 2)", class = "b", resp = "logcoral", ub = 3.39), # set upper bound to 100%
             set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
             set_prior("normal(0, 2)", class = "Intercept")),
   control = list(adapt_delta = 0.99, max_treedepth = 15),
@@ -580,6 +584,7 @@ Yearmodelvalues<-Year_Averages %>%
           logpmax = log(Pmax),
          # Rd =-R_mean,
          # NEC = NEC_mean_Day+NEC_mean_Night
+         N_percent = log(N_percent)
          )%>%
   select(Year,meancoral = mean_coral, 
          meanfleshy = mean_fleshy,
@@ -627,7 +632,7 @@ ct_plot<-as_tibble(coral_temp$logcoral.logcoral_temperature) %>%
   geom_ribbon(aes(ymin =lower__, ymax =  upper__), alpha = 0.25, fill = "#67bed9")+
   geom_point(data = Year_Averages, aes(x = Max_temp, y = exp(log_coral)), alpha = 0.5)+
   coord_transform(y = "log")+
-  scale_y_continuous(breaks = c(1,5,10,20,50,100))+
+  scale_y_continuous(breaks = c(1,5,10,20,40))+
   labs(x = expression("Temperature ("*degree*"C)"),
        y = expression(atop("Coral Cover", "(%)")))
   
@@ -732,9 +737,9 @@ fc_plot<-as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) %>%
 N_Rd<-conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd") 
 nr_plot<-as_tibble(N_Rd$Npercent.Npercent_logrd) %>%
   mutate(logrd = exp(logrd*modelsd$logrd+modelmean$logrd),
-         estimate__ = estimate__*modelsd$Npercent+modelmean$Npercent,
-         lower__ = lower__*modelsd$Npercent+modelmean$Npercent,
-         upper__ = upper__*modelsd$Npercent+modelmean$Npercent ) %>% # unscale the data
+         estimate__ = exp(estimate__*modelsd$Npercent+modelmean$Npercent),
+         lower__ = exp(lower__*modelsd$Npercent+modelmean$Npercent),
+         upper__ = exp(upper__*modelsd$Npercent+modelmean$Npercent )) %>% # unscale the data
   ggplot(aes(x = logrd, y = estimate__))+
   geom_line(linewidth = 1)+
   geom_ribbon(aes(ymin =lower__, ymax =  upper__), alpha = 0.25, fill = "#67bed9")+
@@ -826,7 +831,7 @@ hind_values<-Year_Averages %>%
 
 # Predict the temperature in past and future years/hindcast and forcast
 new_data <- data.frame(Year = test_years_scale)
-pred_new <- posterior_predict(brms_sem_full, newdata = new_data, resp = "temperature")
+pred_new <- posterior_epred(brms_sem_full, newdata = new_data, resp = "temperature")
 
 #convert back to temperature
 Temp_pred_plot<-as_tibble(pred_new*modelsd$temperature+modelmean$temperature) %>%
@@ -843,11 +848,11 @@ Temp_pred_plot<-as_tibble(pred_new*modelsd$temperature+modelmean$temperature) %>
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
        y = "Predicted Average Daily Max Temperature "~degree~"C")+
-  lims(y = c(28,33))
+  lims(y = c(29,32))
 
 ## Take the predicted temperature from each year and calculate predicted coral cover
-newdata_temp<-data.frame(temperature = colMeans(pred_new)) 
-pred_new_coral <- posterior_predict(brms_sem_full, newdata = newdata_temp, resp = "logcoral")
+newdata_temp<-data.frame(temperature = colMeans(pred_new), Year = test_years_scale) 
+pred_new_coral <- posterior_epred(brms_sem_full, newdata = newdata_temp, resp = "logcoral")
 
 Coral_pred_plot<-exp(as_tibble(pred_new_coral*modelsd$logcoral+modelmean$logcoral)) %>%
   pivot_longer(cols = V1:V5) %>%
@@ -863,4 +868,42 @@ Coral_pred_plot<-exp(as_tibble(pred_new_coral*modelsd$logcoral+modelmean$logcora
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
        y = "Coral Cover (%)")+
-  lims(y = c(0,50))
+  lims(y = c(0,25))
+
+# predict Rd
+newdata_logcoral<-data.frame(logcoral = colMeans(pred_new_coral),
+                             temperature = newdata_temp$temperature) 
+
+pred_new_Rd<- posterior_epred(brms_sem_full, newdata = newdata_logcoral, resp = "logrd")
+Rd_pred_plot<-exp(as_tibble(pred_new_Rd*modelsd$logrd+modelmean$logrd)) %>%
+  pivot_longer(cols = V1:V5) %>%
+  mutate(year = case_when(name == "V1" ~"2010",
+                          name == "V2" ~"2020",
+                          name == "V3" ~"2030",
+                          name == "V4" ~"2040",
+                          name == "V5" ~"2050")) %>%
+  ggplot(aes(y = value, x = year))+
+  stat_halfeye(point_interval=mean_hdi, .width=c(.95, .75), 
+               fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73",0.6))+
+  geom_point(data = hind_values, aes(x = as.character(Year), y = Rd), 
+             size = 4, color = "firebrick", position = position_dodge2(width = 1))+
+  labs(x = "Year",
+       y = "Rd")
+
+# Predict N - MAY NEED TO LOG THIS SO IT DOESNT GO BELOW 0 - OR SET A LOWER BOUND
+newdata_N<-data.frame(logrd = colMeans(pred_new_Rd)) 
+pred_new_N<- posterior_epred(brms_sem_full, newdata = newdata_N, resp = "Npercent")
+N_pred_plot<-exp(as_tibble(pred_new_N*modelsd$Npercent+modelmean$Npercent)) %>%
+  pivot_longer(cols = V1:V5) %>%
+  mutate(year = case_when(name == "V1" ~"2010",
+                          name == "V2" ~"2020",
+                          name == "V3" ~"2030",
+                          name == "V4" ~"2040",
+                          name == "V5" ~"2050")) %>%
+  ggplot(aes(y = value, x = year))+
+  stat_halfeye(point_interval=mean_hdi, .width=c(.95, .75), 
+               fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73",0.6))+
+  geom_point(data = hind_values, aes(x = as.character(Year), y = N_percent), 
+             size = 4, color = "firebrick", position = position_dodge2(width = 1))+
+  labs(x = "Year",
+       y = "N (%)")
