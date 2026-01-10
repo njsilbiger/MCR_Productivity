@@ -754,7 +754,7 @@ hf_plot<-as_tibble(herbs_fleshy$herbs.herbs_logfleshy) %>%
   geom_point(data = Year_Averages, aes(x = mean_fleshy, y = Herbivores), alpha = 0.5)+
   coord_trans(x = "log")+
   # scale_y_continuous(breaks = c(1,5,10,20,50,100))+
-  labs(y = expression(atop("Herbivore Fish Biomass", "(g m "^-1*")")),
+  labs(y = expression(atop("Herbivore Fish Biomass", "(g m "^-2*")")),
        x = "Fleshy Macroalgae (%)")
 
 # corallivore ~ corals
@@ -770,7 +770,7 @@ cc_plot<-as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) %>%
   geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Corallivore), alpha = 0.5)+
   coord_trans(x = "log")+
   # scale_y_continuous(breaks = c(1,5,10,20,50,100))+
-  labs(y = expression(atop("Corallivore Fish Biomass", "(g m "^-1*")")),
+  labs(y = expression(atop("Corallivore Fish Biomass", "(g m "^-2*")")),
        x = "Coral Cover (%)")
 
 # Fleshy algae ~ corals
@@ -803,7 +803,7 @@ nr_plot<-as_tibble(N_Rd$Npercent.Npercent_logrd) %>%
   geom_point(data = Year_Averages, aes(x = Rd, y = N_percent), alpha = 0.5)+
   coord_trans(x = "log", y = "log")+
   # scale_y_continuous(breaks = c(1,5,10,20,50,100))+
-  labs(x = expression("Ecosystem Respiration (mmol O"[2]*" m"^2*" hr"^-1*")"),
+  labs(x = expression("Ecosystem Respiration (mmol O"[2]*" m"^-2*" hr"^-1*")"),
        y = expression(atop("Nitrogen Content", "(%)")))
 
 
@@ -907,7 +907,8 @@ Temp_pred_plot<-as_tibble(pred_new*modelsd$temperature+modelmean$temperature) %>
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
        y = expression(atop("Temperature",~degree~"C")))+
-  lims(y = c(28,33))
+  lims(y = c(28,33))+
+  theme(text = element_text(size = 12))
 
 ## Take the predicted temperature from each year and calculate predicted coral cover
 #newdata_temp<-data.frame(temperature = colMeans(pred_new), Year = test_years_scale) 
@@ -932,7 +933,8 @@ Coral_pred_plot<-exp(as_tibble(pred_new_coral*modelsd$logcoral+modelmean$logcora
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
        y = expression(atop("Coral Cover", "(%)")))+
-  lims(y = c(0,25))
+  lims(y = c(0,25))+
+  theme(text = element_text(size = 12))
 
 # predict Rd
 newdata_logcoral<-data.frame(logcoral = colMeans(pred_new_coral),
@@ -952,8 +954,9 @@ Rd_pred_plot<-exp(as_tibble(pred_new_Rd*modelsd$logrd+modelmean$logrd)) %>%
   geom_point(data = hind_values, aes(x = as.character(Year), y = Rd), 
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
-       y = expression(atop("Ecosystem Respiration", "(mmol O "[2]*" m"^2*" hr"^-1*")")))+
-  lims(y = c(0,80))
+       y = expression(atop("Ecosystem Respiration", "(mmol O "[2]*" m"^-2*" hr"^-1*")")))+
+  lims(y = c(0,80))+
+  theme(text = element_text(size = 12))
 
 # Predict N -
 newdata_N<-data.frame(logrd = colMeans(pred_new_Rd)) 
@@ -971,8 +974,9 @@ N_pred_plot<-exp(as_tibble(pred_new_N*modelsd$Npercent+modelmean$Npercent)) %>%
   geom_point(data = hind_values, aes(x = as.character(Year), y = N_percent), 
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
-       y = expression(atop("N", "(%)")))
+       y = expression(atop("N", "(%)")))+
+  theme(text = element_text(size = 12))
 
-  N_pred_plot/Rd_pred_plot/Coral_pred_plot/Temp_pred_plot+plot_annotation(tag_levels = "a")
-  ggsave(here("Output","Predictions.pdf"), height = 10, width = 5,device = cairo_pdf)
+  (N_pred_plot/Rd_pred_plot/Coral_pred_plot/Temp_pred_plot)+plot_annotation(tag_levels = "a")
+  ggsave(here("Output","Figure4.pdf"), height = 10, width = 6,device = cairo_pdf)
   
