@@ -157,13 +157,13 @@ posterior_algae <- as_tibble(as.matrix(fleshy_year)) %>%
 Corallivore_year<-brm(Corallivore~Year, data = std_data)
 posterior_Corallivore <- as_tibble(as.matrix(Corallivore_year)) %>%
   select(Year = b_Year)%>%
-  mutate(Parameter = "Corallivore Biomass")
+  mutate(Parameter = "Corallivore")
 
 # Herbivore Fish Biomass
 dead_coral_fish_year<-brm(Herbivores~Year, data = std_data)
 posterior_dead_coral_fish <- as_tibble(as.matrix(dead_coral_fish_year)) %>%
   select(Year = b_Year)%>%
-  mutate(Parameter = "Herbivore/bioeroding fish biomass")
+  mutate(Parameter = "Herbivore/bioeroding fish")
 
 # In situ average daily max temperature
 temp_year<-brm(Max_temp~Year, data = std_data)
@@ -245,6 +245,50 @@ All_posterior %>%
 
 ggsave(here("Output","ChangePosterior.pdf"), height = 6, width = 10)
 
+# Extract the rates per year in their original units
+
+meanyearmodels<-Year_Averages %>%
+  select(mean_coral, mean_fleshy, Pmax, Rd, 
+         N_percent,
+         Herbivores, Corallivore, NP_mean, Max_temp, GP_mean, Nitrite_and_Nitrate,
+         Phosphate) %>%
+  mutate(across(everything(), 
+                ~as.numeric(mean(.x, na.rm = TRUE)))) %>%
+  #bind_cols(Year_Averages %>% select(Year)) %>%
+  distinct() %>%
+  pivot_longer(cols =mean_coral:Phosphate, names_to = "Parameter", values_to = "Mean")
+
+sdyearmodels<-Year_Averages %>%
+  select(mean_coral, mean_fleshy, Pmax, Rd, 
+         N_percent,
+         Herbivores, Corallivore, NP_mean, Max_temp, GP_mean, Nitrite_and_Nitrate,
+         Phosphate) %>%
+  mutate(across(everything(), 
+                ~as.numeric(sd(.x, na.rm = TRUE)))) %>%
+  #bind_cols(Year_Averages %>% select(Year)) %>%
+  distinct()%>%
+  pivot_longer(cols =mean_coral:Phosphate, names_to = "Parameter", values_to = "SD")
+
+# Make a nice table of the beta coefficients and put them in the correct units
+Rates<-meanyearmodels %>%
+  left_join(sdyearmodels) %>%
+  mutate(Parameter = case_when(Parameter == "mean_coral" ~"% Coral Cover",
+                              Parameter == "mean_fleshy" ~"% Macroalgae Cover",
+                              Parameter == "N_percent" ~"%N Content",
+                              Parameter == "Corallivore" ~"Corallivore",
+                              Parameter == "Rd" ~"Ecosystem Respiration",
+                              Parameter == "Herbivores" ~"Herbivore/bioeroding fish",
+                              Parameter == "Max_temp" ~"Max Temperature",
+                              Parameter == "Pmax" ~"Maximum Photosynthetic Capacity",
+                              Parameter == "NP_mean" ~"Net Ecosystem Production",
+                              Parameter == "Nitrite_and_Nitrate" ~"Nitrate + Nitrite")) %>%
+  drop_na() %>% left_join(
+All_posterior %>% 
+  group_by(Parameter) %>% 
+  summarise(Rate = median(Year))
+) %>%
+  mutate(Rate_Year = round(Rate*SD,2)) # calculate change per year on original scale
+
 ### make a plot showing the bulk % change from start to end of timeseries
 
 ## tricky because the timeseries is different for each variable
@@ -323,13 +367,13 @@ Per_change_var <- first %>%
                                Params== "NP_mean" ~ "Net Ecosystem Production",
                                Params== "Max_temp" ~ "Max Temperature",
                                Params== "mean_biomass"~ "Fish Biomass",
-                               Params== "Herbivores"~ "Hebivore/bioeroding fish",
+                               Params== "Herbivores"~ "Herbivore/bioeroding fish",
                                Params == "Corallivore"~"Corallivore",
                                Params== "C_percent" ~ "% C Content",
                                Params== "Pmax" ~ "Maximum Photosynthetic Capacity",
                                Params== "GP_mean" ~ "Gross Ecosystem Production",
                                Params== "N_percent"~ "%N Content",
-                               Params== "Rd" ~ "Ecosystem Respirataion",
+                               Params== "Rd" ~ "Ecosystem Respiration",
                                Params== "NEC_mean_Day" ~ "Net Ecosystem Calcification",
                                Params== "mean_coral" ~ "% Coral Cover",
                                Params == "Nitrite_and_Nitrate" ~"Nitrate + Nitrite",
@@ -354,7 +398,7 @@ Num_years<-Year_Averages %>%
 
 Per_change_var %>%
   left_join(Num_years) %>%
-  mutate(nicenames = factor(nicenames, levels = c("Hebivore/bioeroding fish",
+  mutate(nicenames = factor(nicenames, levels = c("Herbivore/bioeroding fish",
                                                   "% Macroalgae Cover",
                                                   "Fish Biomass",
                                                   "Net Ecosystem Production",
@@ -363,7 +407,7 @@ Per_change_var %>%
                                                   "Phosphate",
                                                   "Maximum Photosynthetic Capacity",
                                                   "Net Ecosystem Calcification",
-                                                  "Ecosystem Respirataion",
+                                                  "Ecosystem Respiration",
                                                   "Corallivore",
                                                   "% Coral Cover",
                                                   "%N Content",
@@ -376,12 +420,13 @@ Per_change_var %>%
   geom_segment(aes(x = 0, xend = percent_change, yend = fct_rev(nicenames)), size = 1.1)+
   geom_point(aes(x = percent_change, color = color), size = 4)+
   geom_vline(xintercept = 0)+
-  geom_text(aes(x = 180, y = nicenames, label = N), size = 6)+
+  geom_text(aes(x = 180, y = nicenames, label = N), size = 4)+
+  geom_text(data = Rates, aes(x = -120, y = Parameter, label = Rate_Year), size = 4)+
   scale_color_manual(values = c("#B22222","#22B2B2"))+
   labs(x = "Percent change over collected time series (%)",
        y = "")+
   theme_minimal()+
-  lims(x = c(-100,185))+
+  lims(x = c(-130,185))+
   theme(legend.position = "none",
         axis.text = element_text(size = 12),
         axis.title.x = element_text(size = 14))
@@ -861,7 +906,7 @@ Temp_pred_plot<-as_tibble(pred_new*modelsd$temperature+modelmean$temperature) %>
   geom_point(data = hind_values, aes(x = as.character(Year), y = Max_temp), 
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
-       y = "Temperature "~degree~"C")+
+       y = expression(atop("Temperature",~degree~"C")))+
   lims(y = c(28,33))
 
 ## Take the predicted temperature from each year and calculate predicted coral cover
@@ -886,7 +931,7 @@ Coral_pred_plot<-exp(as_tibble(pred_new_coral*modelsd$logcoral+modelmean$logcora
   geom_point(data = hind_values, aes(x = as.character(Year), y = mean_coral), 
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
-       y = "Coral Cover (%)")+
+       y = expression(atop("Coral Cover", "(%)")))+
   lims(y = c(0,25))
 
 # predict Rd
@@ -926,8 +971,8 @@ N_pred_plot<-exp(as_tibble(pred_new_N*modelsd$Npercent+modelmean$Npercent)) %>%
   geom_point(data = hind_values, aes(x = as.character(Year), y = N_percent), 
              size = 4, color = "firebrick", position = position_dodge2(width = 1))+
   labs(x = "Year",
-       y = "N (%)")
+       y = expression(atop("N", "(%)")))
 
-  N_pred_plot/Rd_pred_plot/Coral_pred_plot/Temp_pred_plot
+  N_pred_plot/Rd_pred_plot/Coral_pred_plot/Temp_pred_plot+plot_annotation(tag_levels = "a")
   ggsave(here("Output","Predictions.pdf"), height = 10, width = 5,device = cairo_pdf)
   
