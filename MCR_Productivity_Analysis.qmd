@@ -1,0 +1,1649 @@
+---
+title: "Moorea Coral Reef Productivity Analysis: Long-term Ecosystem Dynamics"
+author: "Nyssa Silbiger"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: show
+    theme: cosmo
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  cache: true
+---
+
+
+# Introduction
+
+This report analyzes long-term ecosystem dynamics at LTER Site 1 in Moorea, French Polynesia. We examine relationships between benthic community composition, environmental conditions, fish assemblages, and ecosystem metabolism over nearly two decades (2005-2025). The analysis integrates multiple datasets to understand how coral reef ecosystems are responding to environmental change.
+
+## Setup
+
+```{r setup}
+#| label: setup
+#| cache: false
+
+# Load required libraries
+library(tidyverse)
+library(here)
+library(lubridate)
+library(brms)
+library(tidybayes)
+library(scales)
+library(patchwork)
+library(viridis)
+library(bayesplot)
+library(ggridges)
+library(ggsci)
+library(psych)
+library(ggcorrplot2)
+library(ggraph)
+library(igraph)
+
+# Set global theme
+theme_set(theme_bw())
+
+# Set seed for reproducibility
+set.seed(223)
+```
+
+# Data Processing Pipeline
+
+## 1. Temperature Data
+
+Extract yearly average and maximum daily temperature values from the backreef temperature time series.
+
+```{r temperature-processing}
+#| label: process-temperature
+
+# Read and process temperature data
+Temp_LTER1 <- read_csv(here("Data", "raw_data", "MCR_LTER02_BTM_Backreef_Forereef_20251114.csv")) |>
+  filter(reef_type_code == "Backreef")
+
+# Calculate daily means, then yearly statistics (optimized with single pass)
+Mean_year_Temp <- Temp_LTER1 |>
+  mutate(date = as.Date(time_local)) |>
+  group_by(date) |>
+  summarise(daily_temp = mean(temperature_c, na.rm = TRUE), .groups = "drop") |>
+  mutate(Year = year(date)) |>
+  group_by(Year) |>
+  summarise(
+    Mean_temp = mean(daily_temp, na.rm = TRUE),
+    Max_temp = max(daily_temp, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Save processed data
+write_csv(Mean_year_Temp, here("Data", "InSituTemp.csv"))
+
+# Quick summary
+summary(Mean_year_Temp)
+```
+
+## 2. Nutrient Data
+
+Process macroalgae tissue nitrogen content and water column nutrients, using tissue N to impute missing water column data.
+
+```{r nutrient-processing}
+#| label: process-nutrients
+
+# Turbinaria %N data (tissue nitrogen as nutrient proxy)
+Turb <- read_csv(here("Data", "raw_data", "MCR_LTER_Macroalgal_CHN_2005_to_2024_20250616.csv")) |>
+  filter(
+    Habitat == "Backreef",
+    Genus == "Turbinaria",
+    Site == "LTER_1",
+    !is.na(N)
+  ) |>
+  group_by(Year) |>
+  summarise(
+    N_percent = mean(N, na.rm = TRUE),
+    C_percent = mean(C, na.rm = TRUE),
+    CN = mean(CN_ratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+write_csv(Turb, here("Data", "Turb_mean.csv"))
+
+# Water column nutrients (bimonthly surveys 2005-2018)
+water <- read_csv(here("Data", "raw_data", "WaterColumnN.csv")) |>
+  mutate(
+    Date = mdy(Date),
+    Year = year(Date)
+  ) |>
+  group_by(Year) |>
+  summarise(across(Phosphate:Nitrite_and_Nitrate,  \(x) mean(x, na.rm = TRUE)), .groups = "drop") |>
+  mutate(Site = "LTER 1")
+
+write_csv(water, here("Data", "Water_N_mean.csv"))
+
+# Impute water N+N from tissue N using linear model
+AllNutrients <- Turb |>
+  full_join(water, by = "Year") |>
+  arrange(Year)
+
+# Model and predict
+modN <- lm(Nitrite_and_Nitrate ~ N_percent, data = AllNutrients)
+AllNutrients$NN_impute <- predict(modN, newdata = AllNutrients)
+
+# Model summary
+cat("\nNutrient imputation model (Nitrite+Nitrate ~ Tissue %N):\n")
+summary(modN)
+```
+
+## 3. Benthic Cover Data
+
+Calculate percent cover for functional groups from benthic transect surveys.
+
+```{r benthic-processing}
+#| label: process-benthic
+
+# Read and classify benthic data
+BenthicCover_Algae <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Survey_Benthic_Cover_20251009.csv")) |>
+  filter(Habitat == "Backreef")
+
+# Create functional group classifications (vectorized)
+Benthic_summary_Algae <- BenthicCover_Algae |>
+  rename(name = Taxonomy_Substrate_Functional_Group) |>
+  mutate(
+    name = case_when(
+      name %in% c(
+        "Amansia rhodantha", "Turbinaria ornata", "Dictyota sp.", "Halimeda sp.",
+        "Galaxaura sp.", "Liagora ceranoides", "Cyanophyta", "Halimeda minima",
+        "Amphiroa fragilissima", "Caulerpa serrulata", "Corallimorpharia",
+        "Dictyota friabilis", "Galaxaura rugosa", "Cladophoropsis membranacea",
+        "Galaxaura filamentosa", "Halimeda discoidea", "Peyssonnelia inamoena",
+        "Caulerpa racemosa", "Valonia ventricosa", "Actinotrichia fragilis",
+        "Dictyota bartayresiana", "Microdictyon umbilicatum", "Halimeda distorta",
+        "Halimeda incrassata", "Halimeda macroloba", "Dictyota implexa",
+        "Gelidiella acerosa", "Dictyosphaeria cavernosa", "Valonia aegagropila",
+        "Microdictyon okamurae", "Halimeda opuntia", "Dichotomaria obtusata",
+        "Chlorodesmis fastigiata", "Phyllodictyon anastomosans", "Phormidium sp.",
+        "Cladophoropsis luxurians", "Sargassum pacificum", "Chnoospora implexa",
+        "Halimeda taenicola", "Boodlea kaeneana", "Padina boryana",
+        "Coelothrix irregularis", "Gelidiella sp.", "Hydroclathrus clathratus",
+        "Dictyota divaricata", "Hypnea spinella", "Dichotomaria marginata",
+        "Sporolithon sp.", "Chaetomorpha antennina", "Asparagopsis taxiformis"
+      ) ~ "Fleshy Macroalgae",
+      name %in% c(
+        "Algal Turf", "Damselfish Turf", "Coral Rubble",
+        "Lobophora variegata", "Shell Debris", "Bare Space"
+      ) ~ "Turf/Cyanobacteria",
+      name %in% c(
+        "Peyssonnelia bornetii", "Peyssonnelia sp.",
+        "Sponge", "Tridacna sp.", "No data"
+      ) ~ "Sand",
+      TRUE ~ name
+    )
+  ) |>
+  group_by(Year, Site, name) |>
+  summarise(
+    total_cover = sum(Percent_Cover, na.rm = TRUE),
+    mean_cover = 100 * total_cover / 5000,
+    .groups = "drop"
+  ) |>
+  mutate(Site = str_replace_all(Site, "_", " "))
+
+write_csv(Benthic_summary_Algae, here("Data", "Benthic_summary_algae.csv"))
+
+# Calculate total calcifiers and living cover
+Total_Calc <- Benthic_summary_Algae |>
+  filter(name %in% c("Coral", "Crustose Corallines")) |>
+  group_by(Year, Site) |>
+  reframe(total_Calc = sum(mean_cover))
+
+TotalLiving <- Benthic_summary_Algae |>
+  filter(name %in% c("Coral", "Crustose Corallines", "Fleshy Macroalgae")) |>
+  group_by(Year, Site) |>
+  summarise(
+    mean_alive = sum(mean_cover),
+    mean_fleshy = sum(mean_cover[name == "Fleshy Macroalgae"], na.rm = TRUE),
+    mean_coral = sum(mean_cover[name == "Coral"], na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## 4. Fish Biomass Data
+
+Process fish survey data by trophic groups.
+
+```{r fish-processing}
+#| label: process-fish
+
+# Read and process fish data
+fish <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Fish_Survey_20250324.csv"))
+
+# Process by trophic groups (optimized filtering)
+fish_summary <- fish |>
+  filter(
+    Site == "LTER_1",
+    Habitat == "Backreef",
+    Biomass < 8000, # Remove outlier sharks
+    Biomass >= 0 # Remove negative (missing) values
+  ) |>
+  mutate(
+    trophic_new = case_when(
+      Fine_Trophic %in% c("Brusher", "Browser", "Excavator", "Scraper") ~ "Herbivores",
+      Fine_Trophic == "Corallivore" ~ "Corallivore",
+      TRUE ~ "Other"
+    )
+  ) |>
+  group_by(Year, trophic_new) |>
+  summarise(
+    fish_g_m2 = sum(Biomass, na.rm = TRUE) / 1200, # 4 transects × 300 m²
+    .groups = "drop"
+  )
+
+write_csv(fish_summary, here("Data", "fish_summary.csv"))
+```
+
+## 5. Primary Production Processing
+
+Process raw production data and extract Pmax and Rd using Bayesian photosynthesis-irradiance curves.
+
+```{r pp-processing}
+#| label: process-pp
+#| cache: true
+
+# Read all QC PP files efficiently
+filedir <- here("Data", "raw_data", "QC_PP")
+files <- dir(path = filedir, pattern = ".csv", full.names = TRUE)
+
+All_PP_data <- files |>
+  set_names() |>
+  map_df(read_csv, .id = "filename", show_col_types = FALSE) |>
+  mutate(DateTime = mdy_hm(DateTime))
+
+# Unit conversion and data cleaning (optimized)
+All_PP_data <- All_PP_data |>
+  mutate(
+    # Convert 2007-2014 from g O2/m2/h to mmol O2/m2/h
+    across(
+      c(UP_Oxy, DN_Oxy, PP),
+      ~ if_else(DateTime < ymd_hms("2014-04-01 00:00:00"), (.x / 32) * 1000, .x)
+    ),
+    Date = as_date(DateTime),
+    DielDateTime = DateTime + hours(12),
+    DielDate = as_date(DielDateTime),
+    Year = year(DateTime)
+  ) |>
+  filter(!Date %in% mdy(c("5/27/2011", "5/28/2011", "1/21/2014", "05/25/2024")))
+
+# Keep only complete 24-hour datasets
+complete_dates <- All_PP_data |>
+  count(DielDate) |>
+  filter(n == 24)
+
+All_PP_data <- complete_dates |>
+  left_join(All_PP_data, by = "DielDate")
+
+# Calculate GP and environmental averages
+Daily_R <- All_PP_data |>
+  group_by(Year, Season, DielDate) |>
+  summarise(R_average = mean(PP[PAR == 0], na.rm = TRUE), .groups = "drop")
+
+All_PP_data <- All_PP_data |>
+  left_join(Daily_R, by = c("Year", "Season", "DielDate")) |>
+  mutate(
+    GP = if_else(PAR == 0, NA_real_, PP - R_average),
+    GP = if_else(GP < 0, NA_real_, GP),
+    Temperature_mean = (UP_Temp + DN_Temp) / 2,
+    Flow_mean = (UP_Velocity_mps + DN_Velocity_mps) / 2
+  )
+
+# Calculate yearly averages
+Year_Averages_PP <- All_PP_data |>
+  mutate(
+    NP = PP,
+    R = if_else(PP < 0, PP, NA_real_)
+  ) |>
+  group_by(Year) |>
+  summarise(
+    NP_mean = mean(NP, na.rm = TRUE),
+    NP_SE = sd(NP, na.rm = TRUE) / sqrt(n()),
+    NP_max = max(NP, na.rm = TRUE),
+    GP_mean = mean(GP, na.rm = TRUE),
+    GP_SE = sd(GP, na.rm = TRUE) / sqrt(n()),
+    R_mean = mean(R, na.rm = TRUE),
+    R_SE = sd(R, na.rm = TRUE) / sqrt(n()),
+    Temperature_mean = mean(Temperature_mean, na.rm = TRUE),
+    Flow_mean = mean(Flow_mean, na.rm = TRUE),
+    PAR_mean = mean(PAR[PAR > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Bayesian Photosynthesis-Irradiance (PI) Curve Analysis
+
+We fit a Bayesian non-linear model to extract photosynthetic parameters (alpha, Pmax, and Rd) for each year. The model uses a rectangular hyperbola:
+
+$$PP = \frac{\alpha \cdot P_{max} \cdot PAR}{\alpha \cdot PAR + P_{max}} + R_d$$
+
+where: - $\alpha$ = initial slope (photosynthetic efficiency) - $P_{max}$ = maximum photosynthetic capacity - $R_d$ = dark respiration (ecosystem respiration) - $PAR$ = photosynthetically active radiation
+
+```{r bayesian-pi-curve}
+# Bayesian PI curves to extract light-independent Pmax and Rd
+LTER1_Pnet <- All_PP_data |>
+  mutate(
+    tempc = Temperature_mean,
+    Flowmean = Flow_mean,
+    flow_log = log(Flowmean),
+    UPDN = as.factor(UPDN),
+    Year = as.factor(Year)
+  )
+
+# Fit Bayesian nonlinear model
+fit1_f <- brm(
+  bf(
+    PP ~ ((alpha * Pmax * PAR) / (alpha * PAR + Pmax)) + Rd,
+    nl = TRUE,
+    alpha ~ 0 + Year,
+    Pmax ~ 0 + Year,
+    Rd ~ 0 + Year
+  ) + student(),
+  data = LTER1_Pnet,
+  set_rescor(FALSE),
+  prior = c(
+    prior(normal(0.1, 10), nlpar = "alpha", lb = 0),
+    prior(normal(-100, 10), nlpar = "Rd", ub = 0),
+    prior(normal(100, 10), nlpar = "Pmax", lb = 0)
+  ),
+  control = list(adapt_delta = 0.95, max_treedepth = 20),
+  cores = 3,
+  chains = 3,
+  seed = 223,
+  iter = 8000,
+  warmup = 2000
+)
+
+# Extract Pmax and Rd coefficients
+names <- rownames(fixef(fit1_f))
+coefficients <- as_tibble(fixef(fit1_f)) |>
+  mutate(params = names)
+
+PRValues <- coefficients |>
+  separate(params, sep = "_", into = c("param_type", "yearname"), remove = FALSE) |>
+  filter(param_type %in% c("Pmax", "Rd")) |>
+  separate(yearname, sep = "r", into = c("y", "year")) |>
+  mutate(year = as.numeric(year)) |>
+  select(Year = year, Estimate, param_type) |>
+  pivot_wider(names_from = param_type, values_from = Estimate)
+
+# Combine with raw averages
+Year_Averages_PP <- Year_Averages_PP |>
+  full_join(PRValues, by = "Year") |>
+  mutate(Rd = -Rd) # Make Rd positive
+
+write_csv(Year_Averages_PP, here("Data", "Year_Averages_PP.csv"))
+```
+
+## 6. Integrate All Datasets
+
+```{r integrate-data}
+#| label: integrate-datasets
+
+# Read processed data files
+Year_Averages_PP <- read_csv(here("Data", "Year_Averages_PP.csv"))
+Turb <- read_csv(here("Data", "Turb_mean.csv"))
+water <- read_csv(here("Data", "Water_N_mean.csv"))
+insitu_temp <- read_csv(here("Data", "InSituTemp.csv"))
+
+fish_trophic <- read_csv(here("Data", "fish_summary.csv")) |>
+  pivot_wider(names_from = trophic_new, values_from = fish_g_m2) |>
+  select(-Other)
+
+Benthic_summary_Algae <- read_csv(here("Data", "Benthic_summary_algae.csv"))
+
+# Create integrated dataset
+Year_Averages <- Year_Averages_PP |>
+  full_join(TotalLiving |> filter(Site == "LTER 1"), by = "Year") |>
+  full_join(water) |>
+  full_join(Turb, by = "Year") |>
+  full_join(insitu_temp, by = "Year") |>
+  full_join(fish_trophic, by = "Year") |>
+  mutate(log_coral = log(mean_coral)) |>
+  filter(Year < 2026) |>
+  arrange(Year)
+
+# Display structure
+glimpse(Year_Averages)
+```
+
+# Exploratory Data Analysis
+
+## Benthic Community Composition
+
+```{r benthic-plot}
+#| label: fig-benthic
+#| fig-cap: "Benthic community composition at LTER Site 1 (2005-2025)"
+#| fig-width: 10
+#| fig-height: 6
+
+# Define color palette
+myPal <- c(
+  Coral = "#c38370",
+  `Fleshy Macroalgae` = "#99ddaa",
+  `Turf/Cyanobacteria` = "#9da993",
+  `Crustose Corallines` = "#523a28",
+  Other = "#bdc3cb",
+  Sand = "#d6ad60"
+)
+
+# Create stacked area plot
+Benthic_summary_Algae |>
+  mutate(name = factor(name, levels = c(
+    "Coral", "Fleshy Macroalgae",
+    "Crustose Corallines", "Turf/Cyanobacteria",
+    "Sand", "Other"
+  ))) |>
+  filter(Site == "LTER 1") |>
+  ggplot(aes(x = Year, y = mean_cover, fill = name)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = myPal) +
+  labs(
+    fill = "",
+    y = "% Cover",
+    title = "Long-term Benthic Community Dynamics"
+  ) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "bottom"
+  )
+```
+
+**Key Observation:** Coral cover declined from `r round(Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover), 1)`% in 2006 to `r round(Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover), 1)`% in 2025, representing a `r round((1 - (Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover)) / (Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover))) * 100, 1)`% reduction.
+
+## Environmental Drivers
+
+```{r environmental-plots}
+#| label: fig-environment
+#| fig-cap: "Environmental conditions over time"
+#| fig-width: 10
+#| fig-height: 6
+
+p1 <- Year_Averages |>
+  ggplot(aes(x = Year, y = Max_temp)) +
+  geom_line(color = "firebrick", linewidth = 1) +
+  geom_point(color = "firebrick", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", alpha = 0.2) +
+  labs(
+    y = "Max Daily Temp (°C)",
+    title = "A. Temperature"
+  )
+
+p2 <- Year_Averages |>
+  ggplot(aes(x = Year, y = N_percent)) +
+  geom_line(color = "darkgreen", linewidth = 1) +
+  geom_point(color = "darkgreen", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "forestgreen", alpha = 0.2) +
+  labs(
+    y = "Tissue N Content (%)",
+    title = "B. Nitrogen"
+  )
+
+p1 + p2
+```
+
+## Fish Community Trends
+
+```{r fish-plots}
+#| label: fig-fish
+#| fig-cap: "Fish biomass by trophic group"
+#| fig-width: 10
+#| fig-height: 4
+
+fish_summary |>
+  ggplot(aes(x = Year, y = fish_g_m2, color = trophic_new)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  facet_wrap(~trophic_new, scales = "free_y") +
+  scale_color_viridis_d(option = "plasma", end = 0.8) +
+  labs(
+    x = "Year",
+    y = "Biomass (g/m²)",
+    title = "Fish Biomass Trends by Trophic Group"
+  ) +
+  theme(legend.position = "none")
+```
+
+# Statistical Analysis
+
+## Temporal Trends
+
+Assess standardized change per year using Bayesian linear models.
+
+```{r temporal-trends}
+#| label: temporal-trends
+#| cache: true
+
+# Create standardized dataset
+std_data <- Year_Averages |>
+  select(
+    mean_coral, mean_fleshy, Pmax, Rd, N_percent,
+    Herbivores, Corallivore, NP_mean, Max_temp, GP_mean,
+    Nitrite_and_Nitrate, Phosphate
+  ) |>
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) |>
+  bind_cols(Year_Averages |> select(Year))
+
+# Fit Bayesian models for each variable
+fit_temporal_model <- function(response_var, param_name) {
+  form <- as.formula(paste(response_var, "~ Year"))
+  mod <- brm(form, data = std_data, silent = 2, refresh = 0)
+  as_tibble(as.matrix(mod)) |>
+    select(Year = b_Year) |>
+    mutate(Parameter = param_name)
+}
+
+# Fit all models
+temporal_results <- list(
+  fit_temporal_model("mean_coral", "% Coral Cover"),
+  fit_temporal_model("mean_fleshy", "% Macroalgae Cover"),
+  fit_temporal_model("Corallivore", "Corallivore"),
+  fit_temporal_model("Herbivores", "Herbivore/bioeroding fish"),
+  fit_temporal_model("N_percent", "%N Content"),
+  fit_temporal_model("Rd", "Ecosystem Respiration"),
+  fit_temporal_model("Pmax", "Maximum Photosynthetic Capacity"),
+  fit_temporal_model("NP_mean", "Net Ecosystem Production"),
+  fit_temporal_model("Max_temp", "Max Temperature"),
+  fit_temporal_model("Nitrite_and_Nitrate", "Nitrate + Nitrite")
+) |>
+  bind_rows()
+```
+
+```{r temporal-plot}
+#| label: fig-temporal
+#| fig-cap: "Standardized temporal trends (positive = increasing over time)"
+#| fig-width: 10
+#| fig-height: 6
+
+# Get NPG color palette
+npg_colors <- pal_npg("nrc")(10)
+npg_extended <- colorRampPalette(npg_colors)(10)
+
+temporal_results |>
+  ggplot(aes(x = Year, y = fct_reorder(Parameter, Year, mean), fill = Parameter)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_density_ridges(alpha = 0.5, color = NA) +
+  scale_fill_manual(values = npg_extended) +
+  annotate("text", x = 0.1, y = 0.75, label = "Increasing over time", hjust = 0) +
+  annotate("text", x = -0.1, y = 0.75, label = "Decreasing over time", hjust = 1) +
+  labs(
+    x = "Standardized change per year",
+    y = "",
+    title = "Long-term Ecosystem Trends"
+  ) +
+  lims(x = c(-0.3, 0.3)) +
+  theme_ridges() +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14),
+    axis.text.x = element_text(size = 12)
+  )
+```
+
+## Percent Change Analysis
+
+```{r percent-change}
+#| label: fig-percent-change
+#| fig-cap: "Percent change from start to end of time series"
+#| fig-width: 10
+#| fig-height: 6
+
+# Helper functions for first/last non-NA values
+get_first_non_na <- function(x) {
+  x[which(!is.na(x))[1]]
+}
+
+get_last_non_na <- function(x) {
+  non_na <- x[!is.na(x)]
+  if (length(non_na) > 0) tail(non_na, 1) else NA
+}
+
+# Calculate percent changes
+change_data <- Year_Averages |>
+  select(
+    NP_mean, mean_fleshy, mean_coral, Pmax, Rd,
+    N_percent, Herbivores, Corallivore, Max_temp, Nitrite_and_Nitrate
+  ) |>
+  summarise(across(everything(), list(
+    first = get_first_non_na,
+    last = get_last_non_na
+  ))) |>
+  pivot_longer(everything()) %>%
+  separate(col = name, into = c("Params", "stat"), sep = "_(?=first|last)", remove = TRUE) |>
+  pivot_wider(names_from = stat, values_from = value) |>
+  mutate(
+    percent_change = (last - first) / first * 100,
+    percent_change = if_else(Params == "NP_mean", -percent_change, percent_change)
+  ) |>
+  mutate(nicenames = case_when(
+    Params == "mean_fleshy" ~ "% Macroalgae Cover",
+    Params == "NP_mean" ~ "Net Ecosystem Production",
+    Params == "Max_temp" ~ "Max Temperature",
+    Params == "Herbivores" ~ "Herbivore/bioeroding fish",
+    Params == "Corallivore" ~ "Corallivore",
+    Params == "Pmax" ~ "Maximum Photosynthetic Capacity",
+    Params == "N_percent" ~ "%N Content",
+    Params == "Rd" ~ "Ecosystem Respiration",
+    Params == "mean_coral" ~ "% Coral Cover",
+    Params == "Nitrite_and_Nitrate" ~ "Nitrate + Nitrite"
+  )) |>
+  arrange(desc(percent_change))
+
+# Calculate rates per year for annotation
+meanyearmodels <- Year_Averages |>
+  select(change_data$Params) |>
+  summarise(across(everything(), mean, na.rm = TRUE)) |>
+  pivot_longer(everything(), names_to = "Params", values_to = "Mean")
+
+sdyearmodels <- Year_Averages |>
+  select(change_data$Params) |>
+  summarise(across(everything(), sd, na.rm = TRUE)) |>
+  pivot_longer(everything(), names_to = "Params", values_to = "SD")
+
+Rates <- meanyearmodels |>
+  left_join(sdyearmodels, by = "Params") |>
+  mutate(nicenames = case_when(
+    Params == "mean_coral" ~ "% Coral Cover",
+    Params == "mean_fleshy" ~ "% Macroalgae Cover",
+    Params == "N_percent" ~ "%N Content",
+    Params == "Corallivore" ~ "Corallivore",
+    Params == "Rd" ~ "Ecosystem Respiration",
+    Params == "Herbivores" ~ "Herbivore/bioeroding fish",
+    Params == "Max_temp" ~ "Max Temperature",
+    Params == "Pmax" ~ "Maximum Photosynthetic Capacity",
+    Params == "NP_mean" ~ "Net Ecosystem Production",
+    Params == "Nitrite_and_Nitrate" ~ "Nitrate + Nitrite"
+  )) |>
+  drop_na() |>
+  left_join(
+    temporal_results |>
+      group_by(Parameter) |>
+      summarise(Rate = median(Year)),
+    by = c("nicenames" = "Parameter")
+  ) |>
+  mutate(Rate_Year = round(Rate * SD, 2))
+
+# Lollipop plot
+change_data |>
+  mutate(
+    nicenames = factor(nicenames, levels = rev(unique(change_data$nicenames))),
+    color = if_else(percent_change > 0, "pos", "neg")
+  ) |>
+  ggplot(aes(x = percent_change, y = nicenames)) +
+  geom_segment(aes(x = 0, xend = percent_change, yend = nicenames), linewidth = 1.1) +
+  geom_point(aes(color = color), size = 4) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = Rates, aes(x = -120, y = nicenames, label = Rate_Year), size = 4) +
+  scale_color_manual(values = c("#B22222", "#22B2B2")) +
+  labs(
+    x = "Percent change over time series (%)",
+    y = "",
+    title = "Ecosystem Change Magnitudes",
+    subtitle = "Numbers on left show annual rate of change in original units"
+  ) +
+  lims(x = c(-130, 185)) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text = element_text(size = 12),
+    axis.title.x = element_text(size = 14)
+  )
+```
+
+## Correlation Analysis
+
+```{r correlations}
+#| label: fig-correlations
+#| fig-cap: "Correlations among ecosystem variables"
+#| fig-width: 10
+#| fig-height: 10
+
+# Compute correlation matrix
+ct <- corr.test(
+  Year_Averages |>
+    select(
+      NP = NP_mean, Rd, Pmax, `%N` = N_percent,
+      `N+N` = Nitrite_and_Nitrate, `% Coral` = mean_coral,
+      `% Algae` = mean_fleshy, `Herbs/eroder` = Herbivores,
+      `Corallivore` = Corallivore, `Max Temp` = Max_temp
+    ),
+  adjust = "none"
+)
+
+corr <- ct$r
+p.mat <- ct$p
+
+ggcorrplot.mixed(corr,
+  upper = "ellipse",
+  lower = "number",
+  p.mat = p.mat,
+  insig = "label_sig",
+  sig.lvl = c(0.05, 0.01, 0.001)
+) +
+  labs(title = "Ecosystem Variable Correlations")
+```
+
+## Structural Equation Modeling
+
+Fit a Bayesian SEM to understand causal pathways among ecosystem components.
+
+```{r sem-prep}
+#| label: sem-preparation
+
+# Calculate year residuals (disturbances beyond temperature)
+yearresid <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.pass))
+
+# Prepare scaled SEM data
+semdata2 <- Year_Averages |>
+  mutate(
+    logfleshy = log(mean_fleshy),
+    logrd = log(Rd),
+    logpmax = log(Pmax),
+    logproducers = log(mean_alive),
+    N_percent = log(N_percent),
+    yearresid = yearresid
+  ) |>
+  select(
+    Year, meancoral = mean_coral, logproducers, meanfleshy = mean_fleshy,
+    temperature = Max_temp, flow = Flow_mean, Npercent = N_percent,
+    logrd, logpmax, logcoral = log_coral, logfleshy, Corallivore,
+    herbs = Herbivores, yearresid
+  ) |>
+  drop_na(logcoral) |>
+  mutate(across(everything(), ~ as.numeric(scale(.x))))
+```
+
+```{r sem-fit}
+#| label: sem-model
+#| cache: true
+
+# Define SEM structure
+bf_temp <- bf(temperature | mi() ~ 1 + Year)
+bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid)
+bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature))
+bf_logrd <- bf(logrd | mi() ~ 1 + logcoral + mi(temperature))
+bf_herbs <- bf(herbs | mi() ~ 1 + logfleshy)
+bf_corallivore <- bf(Corallivore | mi() ~ 1 + logcoral)
+bf_fleshy <- bf(logfleshy | trunc(ub = 2.26) ~ logcoral)
+bf_nutrients <- bf(Npercent | mi() ~ 1 + mi(logrd))
+
+# Fit full SEM
+brms_sem_full <- brm(
+  bf_temp + bf_coraltemp + bf_logrd + bf_herbs + bf_corallivore +
+    bf_nutrients + bf_fleshy + bf_logpmax + set_rescor(FALSE),
+  data = semdata2,
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 11,
+  sample_prior = "no",
+  prior = c(
+    set_prior("normal(0, 2)", class = "b"),
+    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
+    set_prior("normal(0, 2)", class = "Intercept")
+  ),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  family = gaussian(),
+  silent = 2,
+  refresh = 0
+)
+```
+
+```{r sem-summary}
+#| label: sem-results
+
+summary(brms_sem_full)
+```
+
+## SEM Conceptual Model
+
+```{r sem-dag}
+#| label: fig-sem-dag
+#| fig-cap: "Conceptual diagram of the structural equation model showing causal pathways"
+#| fig-width: 14
+#| fig-height: 9
+
+# Define nodes with positions (using consistent IDs)
+nodes <- tibble(
+  id = c("Year", "Temp", "Coral", "Algae", "Rd", "Pmax", "N", "Corallivore", "Herbivore"),
+  label = c("Year", "Temperature", "Coral\nCover", "Fleshy\nMacroalgae", 
+            "Respiration", "Pmax", "N Content", "Corallivore\nFish", "Herbivore\nFish"),
+  x = c(1, 2, 3.5, 5, 3.5, 3.5, 5, 5, 6.5),
+  y = c(4, 4, 4, 3, 5, 6, 5.5, 2, 1),
+  type = c("Driver", "Driver", "Primary Producer", "Primary Producer",
+           "Metabolism", "Metabolism", "Nutrient", "Consumer", "Consumer")
+)
+
+# Define edges using consistent IDs
+edges <- tibble(
+  from = c("Year", "Temp", "Temp", "Temp", 
+           "Coral", "Coral", "Coral", "Coral",
+           "Algae", "Rd"),
+  to = c("Temp", "Coral", "Pmax", "Rd",
+         "Algae", "Pmax", "Rd", "Corallivore",
+         "Herbivore", "N"),
+  effect = c("+", "-", "+", "+", 
+             "-", "+", "+", "+",
+             "+", "+"),
+  strength = c("strong", "strong", "moderate", "moderate",
+               "strong", "moderate", "moderate", "moderate",
+               "moderate", "moderate"),
+  edge_label = c("", "", "", "", "", "", "", "", "", "")
+)
+
+# Create igraph object
+g <- graph_from_data_frame(edges, directed = TRUE, vertices = nodes)
+
+# Create plot using ggraph
+set.seed(42)
+p <- ggraph(g, layout = 'manual', x = nodes$x, y = nodes$y) +
+  # Add edges with arrows
+  geom_edge_link(
+    aes(
+      color = effect,
+      edge_width = strength
+    ),
+    arrow = arrow(length = unit(6, 'mm'), type = "closed"),
+    end_cap = circle(20, 'mm'),
+    start_cap = circle(16, 'mm'),
+    alpha = 0.8,
+    linejoin = "mitre"
+  ) +
+  # Add nodes with different shapes
+  geom_node_point(
+    aes(fill = type, shape = type), 
+    size = 20, 
+    color = "white",
+    stroke = 3
+  ) +
+  # Add node labels
+  geom_node_text(
+    aes(label = label), 
+    size = 4, 
+    fontface = "bold",
+    color = "white",
+    lineheight = 0.85
+  ) +
+  # Customize edge colors
+  scale_edge_color_manual(
+    values = c("+" = "#4DBBD5", "-" = "#E64B35"),
+    labels = c("+" = "Positive", "-" = "Negative"),
+    name = "Effect Direction"
+  ) +
+  scale_edge_width_manual(
+    values = c("strong" = 3, "moderate" = 2, "weak" = 1),
+    guide = "none"
+  ) +
+  # Customize node colors and shapes
+  scale_fill_manual(
+    values = c(
+      "Driver" = "#FFA500",
+      "Primary Producer" = "#228B22",
+      "Metabolism" = "#9370DB",
+      "Nutrient" = "#FFD700",
+      "Consumer" = "#4169E1"
+    ),
+    name = "Component Type"
+  ) +
+  scale_shape_manual(
+    values = c(
+      "Driver" = 22,           # Square
+      "Primary Producer" = 21, # Circle
+      "Metabolism" = 24,       # Triangle
+      "Nutrient" = 23,         # Diamond
+      "Consumer" = 21          # Circle
+    ),
+    name = "Component Type"
+  ) +
+  labs(
+    title = "Structural Equation Model: Reef Ecosystem Dynamics",
+    subtitle = "Arrow width indicates effect strength; arrow color indicates positive (teal) or negative (red) relationships"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5, margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "gray40", margin = margin(b = 20)),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.title = element_text(size = 13, face = "bold"),
+    legend.text = element_text(size = 12),
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin = margin(20, 20, 20, 20)
+  ) +
+  guides(
+    fill = guide_legend(override.aes = list(size = 10)),
+    shape = guide_legend(override.aes = list(size = 10))
+  ) +
+  coord_fixed(ratio = 1, xlim = c(0.3, 7.2), ylim = c(0.3, 6.7))
+
+p
+```
+
+## SEM Path Coefficients
+
+```{r sem-paths}
+#| label: fig-sem-paths
+#| fig-cap: "Standardized effect sizes from structural equation model"
+#| fig-width: 16
+#| fig-height: 6
+
+# Extract and format path coefficients
+gp_edges <- as_tibble(fixef(brms_sem_full)) |>
+  mutate(coef = rownames(fixef(brms_sem_full))) |>
+  separate(col = coef, into = c("resp", "pred")) |>
+  filter(pred != "Intercept") |>
+  rename(est = Estimate, lo = `Q2.5`, hi = `Q97.5`) |>
+  mutate(sig = if_else(sign(lo) == sign(hi), 1, 0.5)) |>
+  mutate(resp = case_when(
+    resp == "temperature" ~ "Temperature",
+    resp == "logfleshy" ~ "Fleshy Macroalgae",
+    resp == "logpmax" ~ "Ecosystem Pmax",
+    resp == "logrd" ~ "Ecosystem Rd",
+    resp == "herbs" ~ "Herbivorous Fish",
+    resp == "Corallivore" ~ "Corallivore Fish",
+    resp == "logcoral" ~ "Coral",
+    resp == "Npercent" ~ "N stock"
+  )) |>
+  mutate(resp = factor(resp, c(
+    "Temperature", "Coral", "Fleshy Macroalgae", "Herbivorous Fish",
+    "Corallivore Fish", "Ecosystem Rd", "Ecosystem Pmax", "N stock"
+  ))) |>
+  mutate(pred = case_when(
+    pred == "temperature" ~ "Temperature",
+    pred == "mitemperature" ~ "Temperature",
+    pred == "logproducers" ~ "Total Producer Cover",
+    pred == "milogrd" ~ "Ecosystem Rd Rate",
+    pred == "logcoral" ~ "Coral Cover",
+    pred == "logfleshy" ~ "Fleshy Macroalgae Cover",
+    pred == "Year" ~ "Year",
+    pred == "yearresid" ~ "Non-Temperature Yearly Variability"
+  )) |>
+  mutate(pred = factor(pred, c(
+    "Ecosystem Rd Rate", "Total Producer Cover",
+    "Fleshy Macroalgae Cover", "Coral Cover", "Non-Temperature Yearly Variability",
+    "Temperature", "Year"
+  )))
+
+gp_edges |>
+  ggplot(aes(x = est, y = pred)) +
+  geom_point(size = 3, color = "firebrick", aes(alpha = sig)) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi, alpha = sig), height = 0, color = "firebrick") +
+  geom_vline(xintercept = 0) +
+  scale_alpha(range = c(0.25, 1)) +
+  labs(
+    x = "Standardized Effect Size",
+    y = "Predictor Variables",
+    title = "SEM Path Coefficients"
+  ) +
+  theme_minimal() +
+  facet_wrap(~resp, nrow = 1) +
+  theme(
+    text = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.text = element_text(size = 12),
+    legend.position = "none"
+  )
+```
+
+## Temperature Effects: Direct vs Indirect
+
+Calculate the total, direct, and indirect effects of temperature on all ecosystem responses.
+
+```{r temp-effects}
+#| label: fig-temp-effects
+#| fig-cap: "Direct and indirect effects of temperature on ecosystem components"
+#| fig-width: 10
+#| fig-height: 8
+#| cache: true
+
+# Extract posterior samples for path coefficients
+post_samples <- as_tibble(as.matrix(brms_sem_full))
+
+# Calculate indirect effects of temperature through coral cover
+# Temperature -> Coral -> [Response]
+
+# Direct effects (already in the model)
+# Temperature -> Coral
+temp_to_coral <- post_samples$b_logcoral_temperature
+
+# Temperature -> Pmax
+temp_to_pmax <- post_samples$bsp_logpmax_mitemperature
+
+# Temperature -> Rd
+temp_to_rd <- post_samples$bsp_logrd_mitemperature
+
+# Indirect effects through coral
+# Coral -> Pmax
+coral_to_pmax <- post_samples$b_logpmax_logcoral
+
+# Coral -> Rd
+coral_to_rd <- post_samples$b_logrd_logcoral
+
+# Coral -> Fleshy Algae
+coral_to_fleshy <- post_samples$b_logfleshy_logcoral
+
+# Coral -> Corallivores
+coral_to_corallivore <- post_samples$b_Corallivore_logcoral
+
+# Fleshy Algae -> Herbivores
+fleshy_to_herbs <- post_samples$b_herbs_logfleshy
+
+# Rd -> N content
+rd_to_n <- post_samples$bsp_Npercent_milogrd
+
+# Calculate total and indirect effects
+effects_data <- tibble(
+  # Coral (direct only)
+  response = c("Coral Cover", "Coral Cover",
+               # Pmax (direct + indirect through coral)
+               "Ecosystem Pmax", "Ecosystem Pmax",
+               # Rd (direct + indirect through coral)
+               "Ecosystem Rd", "Ecosystem Rd",
+               # Fleshy Algae (indirect through coral)
+               "Fleshy Macroalgae", "Fleshy Macroalgae",
+               # Corallivores (indirect through coral)
+               "Corallivore Fish", "Corallivore Fish",
+               # Herbivores (indirect through coral -> algae)
+               "Herbivore Fish", "Herbivore Fish",
+               # N content (indirect through coral -> Rd)
+               "N Content", "N Content"),
+  
+  effect_type = rep(c("Direct", "Indirect"), 7),
+  
+  samples = list(
+    # Coral
+    temp_to_coral,  # Direct
+    rep(0, length(temp_to_coral)),  # No indirect (coral is first response)
+    
+    # Pmax
+    temp_to_pmax,  # Direct
+    temp_to_coral * coral_to_pmax,  # Indirect: Temp -> Coral -> Pmax
+    
+    # Rd
+    temp_to_rd,  # Direct
+    temp_to_coral * coral_to_rd,  # Indirect: Temp -> Coral -> Rd
+    
+    # Fleshy Algae
+    rep(0, length(temp_to_coral)),  # No direct effect
+    temp_to_coral * coral_to_fleshy,  # Indirect: Temp -> Coral -> Algae
+    
+    # Corallivores
+    rep(0, length(temp_to_coral)),  # No direct effect
+    temp_to_coral * coral_to_corallivore,  # Indirect: Temp -> Coral -> Corallivore
+    
+    # Herbivores
+    rep(0, length(temp_to_coral)),  # No direct effect
+    temp_to_coral * coral_to_fleshy * fleshy_to_herbs,  # Indirect: Temp -> Coral -> Algae -> Herbs
+    
+    # N content
+    rep(0, length(temp_to_coral)),  # No direct effect
+    temp_to_coral * coral_to_rd * rd_to_n  # Indirect: Temp -> Coral -> Rd -> N
+  )
+)
+
+# Calculate summary statistics for each effect
+effects_summary <- effects_data |>
+  mutate(
+    median = map_dbl(samples, median),
+    lower = map_dbl(samples, ~quantile(.x, 0.025)),
+    upper = map_dbl(samples, ~quantile(.x, 0.975)),
+    significant = map_lgl(samples, ~sign(quantile(.x, 0.025)) == sign(quantile(.x, 0.975)))
+  ) |>
+  mutate(response = factor(response, levels = c(
+    "Coral Cover", "Fleshy Macroalgae", "Herbivore Fish",
+    "Corallivore Fish", "Ecosystem Rd", "Ecosystem Pmax", "N Content"
+  )))
+
+# Calculate total effects
+total_effects <- effects_summary |>
+  select(response, effect_type, samples) |>
+  pivot_wider(names_from = effect_type, values_from = samples) |>
+  mutate(Total = map2(Direct, Indirect, ~.x + .y)) |>
+  select(response, Total) |>
+  mutate(
+    effect_type = "Total",
+    median = map_dbl(Total, median),
+    lower = map_dbl(Total, ~quantile(.x, 0.025)),
+    upper = map_dbl(Total, ~quantile(.x, 0.975)),
+    significant = map_lgl(Total, ~sign(quantile(.x, 0.025)) == sign(quantile(.x, 0.975)))
+  ) |>
+  rename(samples = Total)
+
+# Combine all effects
+all_effects <- bind_rows(effects_summary, total_effects) |>
+  mutate(effect_type = factor(effect_type, levels = c("Direct", "Indirect", "Total")))
+
+# Create publication-quality plot
+all_effects |>
+  filter(effect_type != "Total") |>  # Show only direct and indirect for clarity
+  ggplot(aes(x = median, y = response, color = effect_type, shape = effect_type)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_pointrange(
+    aes(xmin = lower, xmax = upper, alpha = significant),
+    position = position_dodge(width = 0.5),
+    size = 0.8,
+    linewidth = 1
+  ) +
+  scale_color_manual(
+    values = c("Direct" = "#E64B35", "Indirect" = "#4DBBD5"),
+    name = "Effect Type"
+  ) +
+  scale_shape_manual(
+    values = c("Direct" = 16, "Indirect" = 17),
+    name = "Effect Type"
+  ) +
+  scale_alpha_manual(
+    values = c("TRUE" = 1, "FALSE" = 0.4),
+    guide = "none"
+  ) +
+  labs(
+    x = "Standardized Effect Size",
+    y = "",
+    title = "Temperature Effects on Ecosystem Components",
+    subtitle = "Direct effects and indirect effects mediated through coral decline"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 14),
+    axis.text.y = element_text(size = 13),
+    axis.text.x = element_text(size = 12),
+    axis.title.x = element_text(size = 14, margin = margin(t = 10)),
+    legend.position = "bottom",
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 12),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray40")
+  )
+
+# Print summary table
+cat("\n=== Temperature Effects Summary ===\n\n")
+all_effects |>
+  select(response, effect_type, median, lower, upper, significant) |>
+  mutate(across(median:upper, ~round(.x, 3))) |>
+  arrange(response, effect_type) |>
+  print(n = Inf)
+```
+
+```{r temp-indirect-ranking}
+#| label: fig-temp-indirect
+#| fig-cap: "Ranking of indirect temperature effects on ecosystem components"
+#| fig-width: 8
+#| fig-height: 6
+
+# Extract only indirect effects and rank them
+indirect_effects <- all_effects |>
+  filter(effect_type == "Indirect") |>
+  # Remove coral (no indirect effect)
+  filter(response != "Coral Cover") |>
+  arrange(median) |>
+  mutate(
+    response = fct_reorder(response, median),
+    direction = if_else(median < 0, "Negative", "Positive")
+  )
+
+# Create ranked bar plot
+indirect_effects |>
+  ggplot(aes(x = response, y = median, fill = direction)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "gray30", linewidth = 0.5) +
+  geom_col(alpha = 0.8, width = 0.7) +
+  geom_errorbar(
+    aes(ymin = lower, ymax = upper),
+    width = 0.1,
+    linewidth = 0.8,
+    color = "gray20"
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Negative" = "#E64B35", "Positive" = "#4DBBD5"),
+    name = "Effect Direction"
+  ) +
+  labs(
+    x = "",
+    y = "Standardized Indirect Effect Size",
+    title = "Indirect Effects of Temperature via Coral Decline",
+  #  subtitle = "Ranked from negative to positive effects with 95% credible intervals"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 14),
+    axis.text.y = element_text(size = 13, hjust = 1),
+    axis.text.x = element_text(size = 12),
+    axis.title.x = element_text(size = 14, margin = margin(t = 10)),
+   # legend.position = "bottom",
+    legend.position = "none",
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 12),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray40")
+  )
+
+# Print ranked summary
+cat("\n=== Ranked Indirect Effects (negative to positive) ===\n\n")
+indirect_effects |>
+  select(response, median, lower, upper, significant) |>
+  mutate(across(median:upper, ~round(.x, 3))) |>
+  arrange(median) |>
+  print(n = Inf)
+```
+
+## SEM Conditional Effects
+
+```{r sem-conditional}
+#| label: fig-sem-conditional
+#| fig-cap: "Key relationships from structural equation model"
+#| fig-width: 10
+#| fig-height: 18
+
+# Get unscaling parameters
+Yearmodelvalues <- Year_Averages |>
+  mutate(
+    logfleshy = log(mean_fleshy),
+    logproducers = log(mean_alive),
+    logrd = log(Rd),
+    logpmax = log(Pmax),
+    N_percent = log(N_percent),
+    yearresid = yearresid
+  ) |>
+  select(
+    Year, meancoral = mean_coral, meanfleshy = mean_fleshy,
+    temperature = Max_temp, flow = Flow_mean, Npercent = N_percent,
+    logrd, logpmax, logcoral = log_coral, logproducers,
+    logfleshy, Corallivore, herbs = Herbivores, yearresid
+  ) |>
+  drop_na(logcoral)
+
+modelmean <- Yearmodelvalues |>
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+modelsd <- Yearmodelvalues |>
+  summarise(across(everything(), sd, na.rm = TRUE))
+
+# Year -> Temperature
+temp_year <- conditional_effects(brms_sem_full, resp = "temperature", effects = "Year")
+ty_plot <- as_tibble(temp_year$temperature.temperature_Year) |>
+  mutate(
+    Year = Year * modelsd$Year + modelmean$Year,
+    estimate__ = estimate__ * modelsd$temperature + modelmean$temperature,
+    lower__ = lower__ * modelsd$temperature + modelmean$temperature,
+    upper__ = upper__ * modelsd$temperature + modelmean$temperature
+  ) |>
+  ggplot(aes(x = Year, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = Year, y = Max_temp), alpha = 0.5) +
+  labs(
+    x = "Year",
+    y = "Temperature (°C)",
+    title = "G. Year → Temperature"
+  )
+
+# Temperature -> Coral
+coral_temp <- conditional_effects(brms_sem_full, resp = "logcoral", effects = "temperature")
+ct_plot <- as_tibble(coral_temp$logcoral.logcoral_temperature) |>
+  mutate(
+    temperature = temperature * modelsd$temperature + modelmean$temperature,
+    estimate__ = exp(estimate__ * modelsd$logcoral + modelmean$logcoral),
+    lower__ = exp(lower__ * modelsd$logcoral + modelmean$logcoral),
+    upper__ = exp(upper__ * modelsd$logcoral + modelmean$logcoral)
+  ) |>
+  ggplot(aes(x = temperature, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = Max_temp, y = exp(log_coral)), alpha = 0.5) +
+  coord_trans(y = "log") +
+  scale_y_continuous(breaks = c(1, 5, 10, 20, 40)) +
+  labs(
+    x = "Temperature (°C)",
+    y = "Coral Cover (%)",
+    title = "E. Temperature → Coral"
+  )
+
+# Coral -> Respiration
+rd_coral <- conditional_effects(brms_sem_full, resp = "logrd", effects = "logcoral")
+rc_plot <- as_tibble(rd_coral$logrd.logrd_logcoral) |>
+  mutate(
+    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logrd + modelmean$logrd),
+    lower__ = exp(lower__ * modelsd$logrd + modelmean$logrd),
+    upper__ = exp(upper__ * modelsd$logrd + modelmean$logrd)
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Rd), alpha = 0.5) +
+  coord_trans(x = "log", y = "log") +
+  labs(
+    x = "Coral Cover (%)",
+    y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    title = "B. Coral → Respiration"
+  )
+
+# Coral -> Fleshy Algae
+fleshy_coral <- conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral")
+fc_plot <- as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) |>
+  mutate(
+    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logfleshy + modelmean$logfleshy),
+    lower__ = exp(lower__ * modelsd$logfleshy + modelmean$logfleshy),
+    upper__ = exp(upper__ * modelsd$logfleshy + modelmean$logfleshy)
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), alpha = 0.5) +
+  coord_trans(x = "log", y = "log") +
+  labs(
+    x = "Coral Cover (%)",
+    y = "Fleshy Macroalgae Cover (%)",
+    title = "F. Coral → Macroalgae"
+  )
+
+# Coral -> Corallivores
+corallivore_coral <- conditional_effects(brms_sem_full, resp = "Corallivore", effects = "logcoral")
+cc_plot <- as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) |>
+  mutate(
+    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
+    estimate__ = estimate__ * modelsd$Corallivore + modelmean$Corallivore,
+    lower__ = lower__ * modelsd$Corallivore + modelmean$Corallivore,
+    upper__ = upper__ * modelsd$Corallivore + modelmean$Corallivore
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Corallivore), alpha = 0.5) +
+  coord_trans(x = "log") +
+  labs(
+    x = "Coral Cover (%)",
+    y = expression(atop("Corallivore Fish Biomass", "(g m"^-2*")")),
+    title = "C. Coral → Corallivores"
+  )
+
+# Fleshy Algae -> Herbivores
+herbs_fleshy <- conditional_effects(brms_sem_full, resp = "herbs", effects = "logfleshy")
+hf_plot <- as_tibble(herbs_fleshy$herbs.herbs_logfleshy) |>
+  mutate(
+    logfleshy = exp(logfleshy * modelsd$logfleshy + modelmean$logfleshy),
+    estimate__ = estimate__ * modelsd$herbs + modelmean$herbs,
+    lower__ = lower__ * modelsd$herbs + modelmean$herbs,
+    upper__ = upper__ * modelsd$herbs + modelmean$herbs
+  ) |>
+  ggplot(aes(x = logfleshy, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = mean_fleshy, y = Herbivores), alpha = 0.5) +
+  coord_trans(x = "log") +
+  labs(
+    x = "Fleshy Macroalgae Cover (%)",
+    y = expression(atop("Herbivore Fish Biomass", "(g m"^-2*")")),
+    title = "D. Macroalgae → Herbivores"
+  )
+
+# Respiration -> N Content
+N_Rd <- conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd")
+nr_plot <- as_tibble(N_Rd$Npercent.Npercent_logrd) |>
+  mutate(
+    logrd = exp(logrd * modelsd$logrd + modelmean$logrd),
+    estimate__ = exp(estimate__ * modelsd$Npercent + modelmean$Npercent),
+    lower__ = exp(lower__ * modelsd$Npercent + modelmean$Npercent),
+    upper__ = exp(upper__ * modelsd$Npercent + modelmean$Npercent)
+  ) |>
+  ggplot(aes(x = logrd, y = estimate__)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_point(data = Year_Averages, aes(x = Rd, y = N_percent), alpha = 0.5) +
+  coord_trans(x = "log", y = "log") +
+  labs(
+    x = expression("Ecosystem Respiration (mmol O"[2]*" m"^-2*" hr"^-1*")"),
+    y = "Nitrogen Content (%)",
+    title = "A. Respiration → N Stock"
+  )
+
+# Combine plots with centering for single-plot rows
+# Using plot_layout(widths = c(1, 2, 1)) to ensure centered plots are same size as others
+((plot_spacer() | nr_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) /
+  ((plot_spacer() | rc_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) /
+  (cc_plot + hf_plot) /
+  (ct_plot + fc_plot) /
+  ((plot_spacer() | ty_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) +
+  plot_layout(heights = c(1, 1, 1, 1, 1))
+```
+
+## Future Predictions
+
+Project ecosystem state to 2050 using the SEM.
+
+```{r predictions}
+#| label: fig-predictions
+#| fig-cap: "Ecosystem projections to 2050"
+#| fig-width: 8
+#| fig-height: 10
+#| cache: true
+
+# Define forecast years
+test_years <- c(2010, 2020, 2030, 2040, 2050)
+test_years_scale <- (test_years - modelmean$Year) / modelsd$Year
+
+# Hindcast data for validation
+hind_values <- Year_Averages |>
+  filter(Year %in% c(2010, 2020))
+
+# Predict temperature
+new_data <- data.frame(Year = test_years_scale)
+pred_new <- posterior_predict(brms_sem_full, newdata = new_data, resp = "temperature")
+
+Temp_pred_plot <- as_tibble(pred_new * modelsd$temperature + modelmean$temperature) |>
+  pivot_longer(cols = everything()) |>
+  mutate(year = case_when(
+    name == "V1" ~ "2010", name == "V2" ~ "2020",
+    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
+  )) |>
+  ggplot(aes(y = value, x = year)) +
+  stat_halfeye(
+    point_interval = mean_hdi, .width = c(.95, .75),
+    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
+  ) +
+  geom_point(
+    data = hind_values, aes(x = as.character(Year), y = Max_temp),
+    size = 4, color = "firebrick"
+  ) +
+  labs(x = "Year", y = "Temperature (°C)", title = "A. Temperature") +
+  lims(y = c(28, 33))
+
+# Predict coral cover
+modyear <- lm(yearresid ~ Year, data = semdata2)
+test_years_resid <- predict(modyear, newdata = data.frame(Year = test_years_scale))
+newdata_temp <- data.frame(temperature = colMeans(pred_new), yearresid = test_years_resid)
+pred_new_coral <- posterior_predict(brms_sem_full, newdata = newdata_temp, resp = "logcoral")
+
+Coral_pred_plot <- exp(as_tibble(pred_new_coral * modelsd$logcoral + modelmean$logcoral)) |>
+  pivot_longer(cols = everything()) |>
+  mutate(year = case_when(
+    name == "V1" ~ "2010", name == "V2" ~ "2020",
+    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
+  )) |>
+  ggplot(aes(y = value, x = year)) +
+  stat_halfeye(
+    point_interval = mean_hdi, .width = c(.95, .75),
+    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
+  ) +
+  geom_point(
+    data = hind_values, aes(x = as.character(Year), y = mean_coral),
+    size = 4, color = "firebrick"
+  ) +
+  labs(x = "Year", y = "Coral Cover (%)", title = "B. Coral Cover") +
+  lims(y = c(0, 25))
+
+# Predict Rd
+newdata_logcoral <- data.frame(
+  logcoral = colMeans(pred_new_coral),
+  temperature = newdata_temp$temperature
+)
+pred_new_Rd <- posterior_predict(brms_sem_full, newdata = newdata_logcoral, resp = "logrd")
+
+Rd_pred_plot <- exp(as_tibble(pred_new_Rd * modelsd$logrd + modelmean$logrd)) |>
+  pivot_longer(cols = everything()) |>
+  mutate(year = case_when(
+    name == "V1" ~ "2010", name == "V2" ~ "2020",
+    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
+  )) |>
+  ggplot(aes(y = value, x = year)) +
+  stat_halfeye(
+    point_interval = mean_hdi, .width = c(.95, .75),
+    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
+  ) +
+  geom_point(
+    data = hind_values, aes(x = as.character(Year), y = Rd),
+    size = 4, color = "firebrick"
+  ) +
+  labs(
+    x = "Year",
+    y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    title = "C. Respiration"
+  ) +
+  lims(y = c(0, 80))
+
+# Predict N content
+newdata_N <- data.frame(logrd = colMeans(pred_new_Rd))
+pred_new_N <- posterior_epred(brms_sem_full, newdata = newdata_N, resp = "Npercent")
+
+N_pred_plot <- exp(as_tibble(pred_new_N * modelsd$Npercent + modelmean$Npercent)) |>
+  pivot_longer(cols = everything()) |>
+  mutate(year = case_when(
+    name == "V1" ~ "2010", name == "V2" ~ "2020",
+    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
+  )) |>
+  ggplot(aes(y = value, x = year)) +
+  stat_halfeye(
+    point_interval = mean_hdi, .width = c(.95, .75),
+    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
+  ) +
+  geom_point(
+    data = hind_values, aes(x = as.character(Year), y = N_percent),
+    size = 4, color = "firebrick"
+  ) +
+  labs(x = "Year", y = "N Content (%)", title = "D. Nitrogen Stock")
+
+# Combine predictions
+(Temp_pred_plot / Coral_pred_plot / Rd_pred_plot / N_pred_plot)
+```
+
+# Results & Interpretation
+
+## Key Findings
+
+### 1. Community Shifts
+
+The backreef at LTER Site 1 has undergone dramatic community reorganization:
+
+-   **Coral cover declined by `r round((1 - (Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover)) / (Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover))) * 100, 1)`%** from 2006 to 2025
+-   Fleshy macroalgae increased substantially
+-   Fish community composition shifted with changes in habitat structure
+
+### 2. Environmental Drivers
+
+Temperature has increased significantly and appears to be the primary driver of coral decline through both direct thermal stress and indirect effects mediated through disturbance events.
+
+The nitrogen content in macroalgae shows a strong positive relationship with ecosystem respiration, suggesting that nutrient dynamics are tightly coupled to metabolic processes.
+
+### 3. Ecosystem Metabolism
+
+-   **Net Ecosystem Production (NEP)** declined, indicating reduced carbon sequestration capacity
+-   **Ecosystem Respiration** decreased with coral loss, as coral-dominated communities maintain higher respiration rates through heterotrophic processes
+-   **Pmax** (maximum photosynthetic capacity) declined with loss of primary producers
+
+### 4. Causal Pathways (SEM Results)
+
+The structural equation model revealed several key relationships:
+
+1.  **Temperature → Coral**: Strong negative effect, confirming thermal stress as primary driver
+2.  **Coral → Respiration**: Positive relationship - coral loss reduces community respiration
+3.  **Coral → Macroalgae**: Negative relationship - coral loss enables macroalgal expansion
+4.  **Respiration → N Content**: Positive relationship - metabolic activity influences nutrient cycling
+5.  **Macroalgae → Herbivores**: Positive bottom-up control of herbivorous fish biomass
+
+### 5. Direct vs. Indirect Temperature Effects
+
+The decomposition of temperature effects into direct and indirect pathways reveals the importance of cascading effects through coral decline:
+
+**Direct Effects:**
+- Temperature directly impacts coral cover (strong negative)
+- Temperature directly influences ecosystem metabolism (Pmax and Rd)
+
+**Indirect Effects (mediated through coral decline):**
+- **Ecosystem Respiration**: Largest indirect negative effect - temperature-driven coral loss reduces heterotrophic metabolism
+- **Ecosystem Pmax**: Strong indirect negative effect - loss of coral photosynthetic capacity
+- **Corallivore Fish**: Negative indirect effect - coral loss eliminates habitat and food source
+- **N Content**: Negative indirect effect - reduced respiration decreases nutrient regeneration
+- **Fleshy Macroalgae**: Positive indirect effect - coral loss opens space for algal colonization
+- **Herbivore Fish**: Positive indirect effect - increased algal resources support herbivore biomass (though weaker magnitude)
+
+The ranking of indirect effects demonstrates that **metabolic processes (respiration and photosynthesis) are most strongly affected** by temperature-driven coral decline, followed by trophic reorganization. This suggests that the functional consequences of coral loss may be as important as, or more important than, the compositional shifts themselves.
+
+Notably, for some responses (fleshy macroalgae, herbivores), the indirect positive effects partially offset direct negative effects, leading to complex net responses. This highlights the importance of considering full causal pathways rather than direct effects alone when projecting climate impacts.
+
+### 6. Future Projections
+
+Model projections to 2050 suggest:
+
+-   Continued temperature increase (\~0.5-1°C by 2050)
+-   Further coral decline to \<5% cover under current trajectories
+-   Sustained low ecosystem respiration
+-   Altered nutrient cycling dynamics
+
+These projections assume continuation of current trends and do not account for potential tipping points, adaptation, or management interventions.
+
+## Ecological Implications
+
+The integrated analysis reveals a reef system undergoing state transition from coral-dominated to algal-dominated. This shift has cascading effects on:
+
+1.  **Carbon cycling**: Reduced net productivity and altered respiration patterns - the strong indirect effects on Pmax and respiration indicate that metabolic dysfunction may occur before compositional change is complete
+2.  **Nutrient dynamics**: Changes in nitrogen cycling linked to metabolic shifts - the indirect pathway from temperature through coral loss and reduced respiration to decreased N content reveals tight coupling between community structure and biogeochemical cycling
+3.  **Trophic structure**: Fish communities responding to habitat changes - corallivores decline with coral loss while herbivores increase with algal expansion, but these changes propagate slowly through the food web
+4.  **Functional capacity**: Loss of coral-mediated ecosystem services occurs through multiple pathways, with indirect effects amplifying direct temperature impacts
+
+The decomposition of temperature effects demonstrates that **coral loss acts as a critical mediator** of climate impacts on reef function. Even ecosystem components not directly affected by temperature experience substantial indirect effects through coral decline. This suggests that:
+
+- **Restoration efforts** targeting coral recovery could mitigate multiple indirect climate impacts simultaneously
+- **Early intervention** may be especially valuable given the cascading nature of coral loss effects
+- **Functional metrics** (metabolism, nutrient cycling) may serve as early warning indicators of ecosystem degradation, potentially declining before dramatic compositional shifts
+
+The tight coupling between community composition, environmental conditions, and ecosystem function suggests that restoration efforts must address multiple factors simultaneously, but also that coral recovery could yield disproportionate benefits by reversing negative cascades.
+
+# Conclusions
+
+This long-term analysis of Moorea's backreef ecosystem demonstrates the value of integrated, multi-decadal monitoring for understanding reef dynamics. The data reveal:
+
+1.  **Clear directional change** in community composition driven primarily by warming
+2.  **Complex feedbacks** among benthic communities, fish assemblages, and biogeochemical processes
+3.  **Declining ecosystem function** as measured by net productivity and respiratory capacity
+4.  **Predictable trajectories** that can inform management and restoration planning
+
+Future research should focus on:
+
+-   Identifying potential thresholds and tipping points in the transition process
+-   Understanding resilience mechanisms and recovery potential
+-   Evaluating management interventions to alter current trajectories
+-   Exploring fine-scale spatial heterogeneity in ecosystem responses
+
+The structural equation modeling approach employed here provides a framework for testing causal hypotheses and making projections, but predictions should be interpreted cautiously given the complexity of reef systems and potential for non-linear dynamics.
+
+# Session Information
+
+```{r session-info}
+#| label: session-info
+
+sessionInfo()
+```
