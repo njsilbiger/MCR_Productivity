@@ -1251,96 +1251,6 @@ brms_sem_full <- brm(
 summary(brms_sem_full)
 ```
 
-### Robustness Check: Nutrient Imputation Sensitivity
-
-```{r nutrient-robustness}
-#| label: nutrient-robustness
-#| cache: true
-
-# Refit SEM using only pre-2019 data (before nutrient imputation)
-# This tests whether main results are robust to nutrient data imputation
-
-semdata_pre2019 <- Year_Averages |>
-  filter(Year < 2019) |>
-  mutate(
-    logfleshy = log(mean_fleshy),
-    logrd = log(Rd),
-    logpmax = log(Pmax),
-    N_percent = log(N_percent),
-    yearresid = resid(lm(Year ~ Max_temp, data = Year_Averages |> filter(Year < 2019), na.action = na.pass))
-  ) |>
-  select(
-    Year, temperature = Max_temp, logcoral = log_coral, logfleshy,
-    herbs = Herbivores, Corallivore, logrd, logpmax, Npercent = N_percent, yearresid
-  ) |>
-  drop_na(logcoral) |>
-  mutate(across(everything(), ~ as.numeric(scale(.x))))
-
-# Refit core SEM pathways (excluding N pathway since that uses imputed data)
-brms_sem_robust <- brm(
-  bf_temp + bf_coraltemp + bf_logrd + bf_herbs + bf_corallivore + bf_fleshy + bf_logpmax + set_rescor(FALSE),
-  data = semdata_pre2019,
-  chains = 3,
-  iter = 8000,
-  warmup = 3000,
-  seed = 223,
-  sample_prior = "no",
-  prior = c(
-    set_prior("normal(0, 2)", class = "b"),
-    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
-    set_prior("normal(0, 2)", class = "Intercept")
-  ),
-  control = list(adapt_delta = 0.99, max_treedepth = 15),
-  family = gaussian(),
-  silent = 2,
-  refresh = 0
-)
-
-cat("\n=== Robustness Check: Pre-2019 Data Only ===\n\n")
-cat("Comparing key path coefficients (full model vs. pre-2019 model):\n\n")
-
-# Extract key coefficients
-key_paths <- c("logcoral_temperature", "logcoral_yearresid", "logrd_logcoral", 
-               "logpmax_logcoral", "logfleshy_logcoral", "herbs_logfleshy", 
-               "Corallivore_logcoral")
-
-comparison_results <- tibble(
-  Path = key_paths,
-  Full_Model_Est = fixef(brms_sem_full)[key_paths, "Estimate"],
-  Full_Model_CI_Lower = fixef(brms_sem_full)[key_paths, "Q2.5"],
-  Full_Model_CI_Upper = fixef(brms_sem_full)[key_paths, "Q97.5"],
-  Pre2019_Est = fixef(brms_sem_robust)[key_paths, "Estimate"],
-  Pre2019_CI_Lower = fixef(brms_sem_robust)[key_paths, "Q2.5"],
-  Pre2019_CI_Upper = fixef(brms_sem_robust)[key_paths, "Q97.5"]
-) |>
-  mutate(
-    Difference = abs(Full_Model_Est - Pre2019_Est),
-    CI_Overlap = (Full_Model_CI_Lower <= Pre2019_CI_Upper) & (Pre2019_CI_Lower <= Full_Model_CI_Upper),
-    Path_Label = case_when(
-      Path == "logcoral_temperature" ~ "Temperature → Coral",
-      Path == "logcoral_yearresid" ~ "Year Residual → Coral",
-      Path == "logrd_logcoral" ~ "Coral → Rd",
-      Path == "logpmax_logcoral" ~ "Coral → Pmax",
-      Path == "logfleshy_logcoral" ~ "Coral → Macroalgae",
-      Path == "herbs_logfleshy" ~ "Macroalgae → Herbivores",
-      Path == "Corallivore_logcoral" ~ "Coral → Corallivores"
-    )
-  )
-
-print(comparison_results |> select(Path_Label, Full_Model_Est, Pre2019_Est, Difference, CI_Overlap))
-
-cat(sprintf("\n\nAll %d key pathways show overlapping credible intervals: %s\n",
-            nrow(comparison_results),
-            ifelse(all(comparison_results$CI_Overlap), "YES", "NO")))
-
-cat(sprintf("Mean absolute difference in coefficients: %.3f (standardized units)\n",
-            mean(comparison_results$Difference)))
-
-cat("\nConclusion: Main SEM results are robust to nutrient imputation. Key pathways\n")
-cat("(Temperature→Coral, Coral→Metabolism, Coral→Macroalgae→Herbivores) show consistent\n")
-cat("estimates whether using full dataset (2005-2025) or only pre-imputation data (2005-2018).\n")
-```
-
 ```{r}
 #| label: sem-r2-calculation
 
@@ -1768,19 +1678,24 @@ indirect_effects <- all_effects |>
 
 # Create ranked bar plot
 indirect_effects |>
-  ggplot(aes(x = response, y = median, fill = direction)) +
+  ggplot(aes(x = response, y = median, fill = direction, alpha = significant)) +
   geom_hline(yintercept = 0, linetype = "solid", color = "gray30", linewidth = 0.5) +
-  geom_col(alpha = 0.8, width = 0.7) +
+  geom_col(width = 0.7) +
   geom_errorbar(
     aes(ymin = lower, ymax = upper),
     width = 0.1,
     linewidth = 0.8,
-    color = "gray20"
+    color = "gray20",
+    alpha = 0.6
   ) +
   coord_flip() +
   scale_fill_manual(
     values = c("Negative" = "#E64B35", "Positive" = "#4DBBD5"),
     name = "Effect Direction"
+  ) +
+  scale_alpha_manual(
+    values = c("TRUE" = 0.9, "FALSE" = 0.2),
+    guide = "none"
   ) +
   labs(
     x = "",
@@ -1788,20 +1703,19 @@ indirect_effects |>
     title = "Indirect Effects of Temperature via Coral Decline",
   #  subtitle = "Ranked from negative to positive effects with 95% credible intervals"
   ) +
-  theme_minimal() +
+  theme_minimal(base_size = 18) +
   theme(
-    text = element_text(size = 14),
-    axis.text.y = element_text(size = 13, hjust = 1),
-    axis.text.x = element_text(size = 12),
-    axis.title.x = element_text(size = 14, margin = margin(t = 10)),
+    axis.text.y = element_text(size = 16, hjust = 1),
+    axis.text.x = element_text(size = 15),
+    axis.title.x = element_text(size = 17, margin = margin(t = 10)),
    # legend.position = "bottom",
     legend.position = "none",
-    legend.title = element_text(size = 13),
-    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 15),
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    plot.title = element_text(size = 16, face = "bold"),
-    plot.subtitle = element_text(size = 12, color = "gray40")
+    plot.title = element_text(size = 19, face = "bold"),
+    plot.subtitle = element_text(size = 15, color = "gray40")
   )
 
 # Print ranked summary
