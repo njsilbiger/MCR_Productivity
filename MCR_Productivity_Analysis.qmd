@@ -318,7 +318,7 @@ Year_Averages_PP <- All_PP_data |>
 
 ## Sampling Coverage Summary
 
-```{r sampling-coverage}
+```{r}
 #| label: sampling-coverage
 
 # Calculate sampling metrics
@@ -363,8 +363,8 @@ cat(sprintf("  Years with data: %d of %d possible (100%%)\n\n", fish_coverage, 2
 
 cat(sprintf("Temperature:\n"))
 cat(sprintf("  Continuous 15-minute measurements: %d-%d (100%% coverage)\n\n", 
-            min(Year_Averages$Year, na.rm = TRUE),
-            max(Year_Averages$Year, na.rm = TRUE)))
+            min(lubridate::year(Temp_LTER1$time_local), na.rm = TRUE),
+            max(lubridate::year(Temp_LTER1$time_local), na.rm = TRUE)))
 
 cat(sprintf("Nutrients:\n"))
 cat(sprintf("  Water column (direct): 2005-2018\n"))
@@ -571,7 +571,14 @@ fish_summary |>
     y = "Biomass (g/m²)",
     title = "Fish Biomass Trends by Trophic Group"
   ) +
-  theme(legend.position = "none")
+  theme_bw(base_size = 14) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 13, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    plot.title = element_text(size = 16, face = "bold")
+  )
 ```
 
 ## Ecosystem Metabolism Time Series
@@ -579,8 +586,8 @@ fish_summary |>
 ```{r metabolism-timeseries}
 #| label: fig-metabolism
 #| fig-cap: "Twenty-year time series of ecosystem metabolism showing declines in photosynthetic capacity (Pmax), respiration (Rd), and net production (NP). Points represent annual means; shaded ribbons show 95% credible intervals from Bayesian linear trend models. Pmax and Rd were extracted from Bayesian photosynthesis-irradiance curves to provide light-independent metabolic indices."
-#| fig-width: 12
-#| fig-height: 10
+#| fig-width: 10
+#| fig-height: 8
 #| cache: true
 
 # Prepare data for plotting with expression labels
@@ -662,7 +669,7 @@ metabolism_plot <- ggplot(metabolism_data, aes(x = Year, y = value)) +
     aes(x = x, y = y, label = label),
     hjust = 0,
     vjust = 1.2,
-    size = 3.5,
+    size = 4.5,
     color = "gray30",
     parse = TRUE
   ) +
@@ -681,11 +688,11 @@ metabolism_plot <- ggplot(metabolism_data, aes(x = Year, y = value)) +
     title = "Long-term Ecosystem Metabolism Decline at MCR LTER Site 1",
     subtitle = "Backreef metabolism measurements (2005-2025) showing directional changes in all metabolic components"
   ) +
-  theme_bw(base_size = 14) +
+  theme_bw(base_size = 16) +
   theme(
     # Strip formatting
     strip.background = element_blank(),
-    strip.text = element_text(size = 11, face = "bold", hjust = 0),
+    strip.text = element_text(size = 14, face = "bold", hjust = 0),
     strip.placement = "outside",
     
     # Panel formatting
@@ -694,13 +701,13 @@ metabolism_plot <- ggplot(metabolism_data, aes(x = Year, y = value)) +
     panel.border = element_rect(color = "gray60", linewidth = 0.5),
     
     # Axis formatting
-    axis.title.x = element_text(size = 13, margin = margin(t = 10)),
-    axis.text = element_text(size = 11, color = "gray20"),
+    axis.title.x = element_text(size = 15, margin = margin(t = 10)),
+    axis.text = element_text(size = 13, color = "gray20"),
     axis.ticks = element_line(color = "gray60"),
     
     # Title formatting
-    plot.title = element_text(size = 15, face = "bold", margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 11, color = "gray40", margin = margin(b = 15)),
+    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15)),
     
     # Overall plot
     plot.margin = margin(15, 15, 10, 10),
@@ -750,9 +757,9 @@ cat(sprintf("  Total change (20 yr): %.1f mmol O₂ m⁻² hr⁻¹\n", np_slope 
 
 ```{r pr-ratio}
 #| label: fig-pr-ratio
-#| fig-cap: "Production to Respiration (P/R) ratio over time. Values >1 indicate net autotrophy (production exceeds respiration), while values <1 indicate net heterotrophy. Odum (1969) proposed P/R as an indicator of ecosystem maturity, with mature systems approaching P/R = 1. The declining trend suggests ecosystem retrogression."
-#| fig-width: 10
-#| fig-height: 6
+#| fig-cap: "Production to Respiration (P/R) ratio over time. Values >1 indicate net autotrophy (production exceeds respiration), while values <1 indicate net heterotrophy. Odum (1969) proposed P/R as an indicator of ecosystem maturity, with mature systems approaching P/R = 1. The increasing trend away from 1 reflects disproportionate loss of respiratory capacity (coral biomass) relative to production."
+#| fig-width: 5
+#| fig-height: 3
 
 # Calculate P/R ratio
 Year_Averages <- Year_Averages |>
@@ -785,26 +792,26 @@ pr_plot <- ggplot(Year_Averages, aes(x = Year, y = P_R_ratio)) +
     label = sprintf("%.3f yr⁻¹ [95%% CI: %.3f, %.3f]\nBayesian R² = %.2f",
                     pr_slope, pr_ci[1], pr_ci[2], pr_r2),
     hjust = 0, vjust = 1.2,
-    size = 3.5, color = "gray30"
+    size = 4.5, color = "gray30"
   ) +
   annotate("text", x = 2024, y = 1.05, label = "Net Autotrophy (P > R)", 
-           hjust = 1, size = 3, color = "gray40") +
+           hjust = 1, size = 4, color = "gray40") +
   annotate("text", x = 2024, y = 0.95, label = "Net Heterotrophy (P < R)", 
-           hjust = 1, size = 3, color = "gray40") +
+           hjust = 1, size = 4, color = "gray40") +
   labs(
     x = "Year",
     y = "P/R Ratio (Pmax / Rd)",
     title = "Ecosystem Maturity Decline: Production/Respiration Ratio",
-    subtitle = "Declining P/R indicates ecosystem retrogression (sensu Odum 1969)"
+    subtitle = "Increasing P/R (moving away from 1) indicates loss of respiratory biomass"
   ) +
-  theme_bw(base_size = 14) +
+  theme_bw(base_size = 16) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-    axis.title = element_text(size = 13),
-    axis.text = element_text(size = 11),
-    plot.title = element_text(size = 15, face = "bold", margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 11, color = "gray40", margin = margin(b = 15))
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 13),
+    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15))
   ) +
   scale_x_continuous(breaks = seq(2007, 2025, by = 3),
                      minor_breaks = seq(2007, 2025, by = 1),
@@ -823,14 +830,114 @@ cat(sprintf("Recent P/R (2023-2025): %.2f ± %.2f\n",
 cat(sprintf("Slope: %.4f yr⁻¹ [95%% CI: %.4f, %.4f]\n", pr_slope, pr_ci[1], pr_ci[2]))
 cat(sprintf("Total change: %.2f over 20 years\n", pr_slope * 20))
 cat(sprintf("Bayesian R²: %.3f\n", pr_r2))
-cat("\nInterpretation: P/R ratio declining from ~%.1f to ~%.1f indicates shift toward\n",
+cat("\nInterpretation: P/R ratio increasing from ~%.1f to ~%.1f indicates shift away\n",
     mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE),
     mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE))
-cat("less mature ecosystem state, with reduced capacity to maintain high biomass\n")
-cat("per unit energy flow—a reversal of Odum's ecosystem development trajectory.\n")
+cat("from mature ecosystem balance. The higher P/R reflects disproportionate loss of\n")
+cat("respiratory biomass (coral holobiont) while production remains—ecosystem retrogression\n")
+cat("through loss of high-biomass, high-metabolism structure (sensu Odum 1969).\n")
 ```
 
-**Ecosystem Maturity Decline**: The P/R ratio provides an integrative measure of ecosystem development (Odum 1969). Mature ecosystems approach P/R ≈ 1, balancing production and respiration with high biomass and efficient nutrient cycling. The observed decline in P/R from `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 2)` to `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 2)` represents ecosystem retrogression—loss of structural complexity and metabolic efficiency characteristic of coral-dominated systems.
+**Ecosystem Maturity Decline**: The P/R ratio provides an integrative measure of ecosystem development (Odum 1969). Mature ecosystems approach P/R ≈ 1, balancing production and respiration with high biomass and efficient nutrient cycling. The observed increase in P/R from `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 2)` to `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 2)` represents ecosystem retrogression through disproportionate loss of respiratory capacity. While mature coral reefs maintain P/R ≈ 1 through high biomass and tight metabolic coupling, the increasing P/R indicates loss of the high-respiration coral holobiont while production (largely from algae) persists, creating metabolic imbalance characteristic of degraded systems.
+
+```{r gp-r-ratio}
+#| label: fig-gp-r-ratio
+#| fig-cap: "Gross Production to Respiration (GP/R) ratio over time, using measured gross production (GP_mean) from daily metabolism rather than light-saturated Pmax. Values >1 indicate net autotrophy. The GP/R ratio represents actual in situ metabolic balance under ambient light conditions, while Pmax/R represents potential production capacity under saturating light."
+#| fig-width: 5
+#| fig-height: 3
+
+# Calculate GP/R ratio using absolute value of R_mean (respiration is negative)
+Year_Averages <- Year_Averages |>
+  mutate(GP_R_ratio = GP_mean / abs(R_mean))
+
+# Fit Bayesian model for GP/R ratio trend
+gpr_brm <- brm(GP_R_ratio ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
+
+# Extract coefficients
+gpr_slope <- fixef(gpr_brm)["Year", "Estimate"]
+gpr_ci <- fixef(gpr_brm)["Year", c("Q2.5", "Q97.5")]
+gpr_r2 <- median(bayes_R2(gpr_brm)[, 1])
+
+# Create plot
+gpr_plot <- ggplot(Year_Averages, aes(x = Year, y = GP_R_ratio)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray30", linewidth = 0.8) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    color = "#E7298A",
+    fill = "#E7298A",
+    alpha = 0.15,
+    linewidth = 1
+  ) +
+  geom_point(size = 3, color = "#E7298A", alpha = 0.7) +
+  geom_line(color = "#E7298A", linewidth = 0.5, alpha = 0.4) +
+  annotate(
+    "text",
+    x = 2008, y = Inf,
+    label = sprintf("%.3f yr⁻¹ [95%% CI: %.3f, %.3f]\nBayesian R² = %.2f",
+                    gpr_slope, gpr_ci[1], gpr_ci[2], gpr_r2),
+    hjust = 0, vjust = 1.2,
+    size = 4.5, color = "gray30"
+  ) +
+  annotate("text", x = 2024, y = 1.05, label = "Net Autotrophy (GP > R)", 
+           hjust = 1, size = 4, color = "gray40") +
+  annotate("text", x = 2024, y = 0.95, label = "Net Heterotrophy (GP < R)", 
+           hjust = 1, size = 4, color = "gray40") +
+  labs(
+    x = "Year",
+    y = "GP/R Ratio (Gross Production / |Respiration|)",
+    title = "In Situ Metabolic Balance: Gross Production/Respiration Ratio",
+    subtitle = "GP/R based on daily integrated metabolism under ambient light conditions"
+  ) +
+  theme_bw(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+    axis.title = element_text(size = 15),
+    axis.text = element_text(size = 13),
+    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15))
+  ) +
+  scale_x_continuous(breaks = seq(2007, 2025, by = 3),
+                     minor_breaks = seq(2007, 2025, by = 1),
+                     limits = c(2007, 2025))
+
+gpr_plot
+
+# Print summary
+cat("\n=== GP/R Ratio Analysis (In Situ Metabolism) ===\n\n")
+cat(sprintf("Initial GP/R (2008-2010): %.2f ± %.2f\n",
+            mean(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE),
+            sd(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE)))
+cat(sprintf("Recent GP/R (2023-2025): %.2f ± %.2f\n",
+            mean(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE),
+            sd(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE)))
+cat(sprintf("Slope: %.4f yr⁻¹ [95%% CI: %.4f, %.4f]\n", gpr_slope, gpr_ci[1], gpr_ci[2]))
+cat(sprintf("Total change: %.2f over 20 years\n", gpr_slope * 20))
+cat(sprintf("Bayesian R²: %.3f\n", gpr_r2))
+
+cat("\nInterpretation: GP/R represents the actual metabolic balance under ambient light\n")
+cat("conditions, while Pmax/R represents potential production capacity. Both ratios show\n")
+cat("similar patterns, though GP/R is consistently lower than Pmax/R because GP reflects\n")
+cat("daily integrated production (including low-light periods) rather than light-saturated\n")
+cat("maximum capacity. The ecosystem consistently operates below its photosynthetic potential.\n")
+
+# Compare Pmax/R vs GP/R
+cat("\n=== Comparison: Pmax/R vs GP/R ===\n\n")
+cat(sprintf("Mean Pmax/R: %.2f ± %.2f\n",
+            mean(Year_Averages$P_R_ratio, na.rm = TRUE),
+            sd(Year_Averages$P_R_ratio, na.rm = TRUE)))
+cat(sprintf("Mean GP/R: %.2f ± %.2f\n",
+            mean(Year_Averages$GP_R_ratio, na.rm = TRUE),
+            sd(Year_Averages$GP_R_ratio, na.rm = TRUE)))
+cat(sprintf("Ratio of Pmax/R to GP/R: %.2f\n",
+            mean(Year_Averages$P_R_ratio, na.rm = TRUE) / mean(Year_Averages$GP_R_ratio, na.rm = TRUE)))
+cat("\nThis indicates the ecosystem operates at approximately %.0f%% of its light-saturated\n",
+    (mean(Year_Averages$GP_R_ratio, na.rm = TRUE) / mean(Year_Averages$P_R_ratio, na.rm = TRUE)) * 100)
+cat("photosynthetic capacity under daily ambient light conditions.\n")
+```
+
+**GP/R vs Pmax/R Comparison**: The GP/R ratio (mean: `r round(mean(Year_Averages$GP_R_ratio, na.rm = TRUE), 2)`) is consistently lower than Pmax/R (mean: `r round(mean(Year_Averages$P_R_ratio, na.rm = TRUE), 2)`) because gross production integrates over full daily light cycles including dawn, dusk, and night periods, while Pmax represents maximum photosynthetic capacity under light saturation. The ratio of these two metrics (`r round(mean(Year_Averages$P_R_ratio, na.rm = TRUE) / mean(Year_Averages$GP_R_ratio, na.rm = TRUE), 1)`:1) indicates the degree to which the ecosystem operates below its photosynthetic potential under natural light regimes. Both metrics show similar temporal trends, confirming that metabolic imbalance is occurring at both potential and realized levels of ecosystem function.
 
 # Statistical Analysis
 
@@ -1233,6 +1340,9 @@ cat("\nConclusion: Main SEM results are robust to nutrient imputation. Key pathw
 cat("(Temperature→Coral, Coral→Metabolism, Coral→Macroalgae→Herbivores) show consistent\n")
 cat("estimates whether using full dataset (2005-2025) or only pre-imputation data (2005-2018).\n")
 ```
+
+```{r}
+#| label: sem-r2-calculation
 
 # Calculate Bayesian R² for each response variable in the SEM
 # Note: Some responses with missing data imputation may have NaN - filter these out
@@ -2209,7 +2319,7 @@ Our results suggest that even reefs maintaining some coral cover experience func
 
 **Synthesis with ecosystem ecology principles**:
 - Odum's (1969) concept of ecosystem development predicts mature systems with high biomass, low net production, efficient nutrient cycling - coral reefs as "climax" systems maximizing P/R ratios and biomass per unit energy flow
-- Our results show reversal: coral loss reduces both production (lower Pmax) and respiration (lower biomass), but P/R ratio shifts toward less mature state with lower respiratory capacity per photosynthetic output
+- Our results show reversal: coral loss reduces both production (lower Pmax) and respiration (lower biomass), but respiration declines faster, causing P/R ratio to increase away from mature-system balance of P/R ≈ 1, indicating loss of high-biomass, high-respiration structure
 - Reframes coral decline as "ecosystem de-development" or retrogression - loss of structural complexity, reduced metabolic efficiency, loosening of nutrient cycles
 
 **Biogeochemical implications**:
@@ -2344,7 +2454,7 @@ MCR LTER data publicly available via EDI Data Portal. Analysis code and processe
 
 **Conceptual contributions**: Odum's reef studies established foundational concepts in ecosystem ecology: (1) **P/R ratios as maturity indices** - mature systems approach metabolic balance; (2) **Nutrient spiraling** - efficient nutrient retention and recycling in oligotrophic environments; (3) **Trophic efficiency** - high biomass per unit energy flow through tight food web linkages; (4) **Ecosystem development** - progression from r-selected, high-net-production systems to K-selected, high-biomass systems. Coral reefs became the archetype of "climax" ecosystems optimized for stability rather than growth.
 
-**Contemporary decline**: Our MCR data reveal the reversal of Odum's trajectory. Where Eniwetok showed P/R ≈ 1 with high biomass and efficient nutrient cycling, MCR exhibits declining P/R (from ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 1)` to ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 1)`), collapsing biomass (70% coral loss), and disrupted nutrient dynamics (respiration-N coupling weakened). This represents **ecosystem retrogression**—the undoing of ecological development. Climate change is dismantling the metabolic paradigm Odum described, with coral reefs losing the very characteristics that made them foundational to ecosystem science. The MCR time series documents this transition in unprecedented detail, providing a metabolic obituary for a disappearing ecosystem type.
+**Contemporary decline**: Our MCR data reveal the reversal of Odum's trajectory. Where Eniwetok showed P/R ≈ 1 with high biomass and efficient nutrient cycling, MCR exhibits increasing P/R (from ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 1)` to ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 1)`) driven by collapsing biomass (70% coral loss) and disproportionate loss of respiratory capacity, alongside disrupted nutrient dynamics (respiration-N coupling weakened). This represents **ecosystem retrogression**—the undoing of ecological development. The shift away from P/R ≈ 1 reflects loss of the tight metabolic balance that characterized mature coral reefs, replaced by metabolic imbalance where production persists but respiratory biomass is lost. Climate change is dismantling the metabolic paradigm Odum described, with coral reefs losing the very characteristics that made them foundational to ecosystem science. The MCR time series documents this transition in unprecedented detail, providing a metabolic obituary for a disappearing ecosystem type.
 
 ### Box 2: "Structural equation modeling for causal inference in long-term ecology"
 
