@@ -1004,34 +1004,215 @@ temporal_models |>
 
 ```{r temporal-plot}
 #| label: fig-temporal
-#| fig-cap: "Standardized temporal trends (positive = increasing over time)"
-#| fig-width: 10
-#| fig-height: 6
+#| fig-cap: "Standardized temporal trends and raw time-series for 10 reef ecosystem
+#|   variables. (a) Posterior distributions of the standardized slope (change per year)
+#|   from Bayesian linear models; vertical dashed line at zero; white tick marks indicate
+#|   95% credible intervals. (b) Raw annual observations (points) with posterior median
+#|   trendline and 95% credible interval ribbon on original measurement scales. Units:
+#|   coral and macroalgae cover (%); fish biomass (g m\u207b\u00b2); N content (%);
+#|   ecosystem metabolism (mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9); temperature (\u00b0C);
+#|   nitrate+nitrite (\u00b5mol L\u207b\u00b9). Colour encodes direction: red = increasing,
+#|   blue = decreasing."
+#| fig-width: 8.9
+#| fig-height: 7.5
 
-# Get NPG color palette
-npg_colors <- pal_npg("nrc")(10)
-npg_extended <- colorRampPalette(npg_colors)(10)
+library(patchwork)
+library(showtext)
+library(sysfonts)
 
-temporal_results |>
-  ggplot(aes(x = Year, y = fct_reorder(Parameter, Year, mean), fill = Parameter)) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  geom_density_ridges(alpha = 0.5, color = NA) +
-  scale_fill_manual(values = npg_extended) +
-  annotate("text", x = 0.1, y = 0.75, label = "Increasing over time", hjust = 0) +
-  annotate("text", x = -0.1, y = 0.75, label = "Decreasing over time", hjust = 1) +
-  labs(
-    x = "Standardized change per year",
-    y = "",
-    title = "Long-term Ecosystem Trends"
+# Noto Sans has full Unicode coverage (superscripts, µ, °, subscripts)
+# Falls back gracefully if offline — font is cached after first download
+font_add_google("Noto Sans", family = "noto")
+showtext_auto(enable = TRUE)
+
+# ── Nature-ready base theme (7 pt, classic, no gridlines) ──────────────────
+theme_nature <- function(base_size = 7) {
+  theme_classic(base_size = base_size) +
+    theme(
+      text             = element_text(family = "noto"),
+      axis.text        = element_text(size = base_size, color = "black"),
+      axis.title       = element_text(size = base_size + 0.5),
+      axis.line        = element_line(linewidth = 0.35, color = "black"),
+      axis.ticks       = element_line(linewidth = 0.35, color = "black"),
+      strip.background = element_blank(),
+      strip.text       = element_text(size = 6.5, face = "plain", color = "grey20"),
+      panel.spacing    = unit(0.5, "lines"),
+      legend.position  = "none",
+      plot.tag         = element_text(face = "bold", size = 9)
+    )
+}
+
+col_inc <- "#E64B35"   # NPG red  — increasing
+col_dec <- "#4DBBD5"   # NPG teal — decreasing
+
+# ── Summarise posterior slopes (order + color mapping) ─────────────────────
+slope_summary <- temporal_results |>
+  group_by(Parameter) |>
+  summarise(
+    median_slope = median(Year),
+    direction    = if_else(median_slope > 0, "Increasing", "Decreasing"),
+    .groups = "drop"
+  ) |>
+  arrange(median_slope)
+
+param_levels <- slope_summary$Parameter
+
+# Short names for panel a y-axis (strip units line from panel b labels)
+short_name_map <- scale_params |>
+  select(Parameter, label) |>
+  mutate(short_name = str_remove(label, "\n.*"))
+
+# ── Panel a: Posterior density ridges ──────────────────────────────────────
+panel_a <- temporal_results |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(short_name_map, by = "Parameter") |>
+  mutate(short_name = factor(short_name, levels = short_name_map$short_name[match(param_levels, short_name_map$Parameter)])) |>
+  ggplot(aes(x = Year, y = short_name, fill = direction)) +
+  geom_vline(
+    xintercept = 0, linetype = "dashed",
+    linewidth = 0.35, color = "grey55"
   ) +
-  lims(x = c(-0.3, 0.3)) +
-  theme_ridges() +
-  theme(
-    legend.position = "none",
-    axis.text.y = element_text(size = 12),
-    axis.title.x = element_text(size = 14),
-    axis.text.x = element_text(size = 12)
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.025, 0.975),
+    alpha = 0.75, linewidth = 0.25, color = "white",
+    scale = 0.88, rel_min_height = 0.01
+  ) +
+  scale_fill_manual(values = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+  annotate("text", x =  0.06, y = 0.6, label = "Increasing \u2192",
+           hjust = 0, size = 1.9, color = col_inc, fontface = "italic", family = "noto") +
+  annotate("text", x = -0.06, y = 0.6, label = "\u2190 Decreasing",
+           hjust = 1, size = 1.9, color = col_dec, fontface = "italic", family = "noto") +
+  labs(x = "Standardized change per year", y = NULL, tag = "a") +
+  lims(x = c(-0.35, 0.35)) +
+  theme_nature() +
+  theme(axis.text.y = element_text(size = 6.5))
+
+# ── Back-transform fitted values and raw data to original scales ────────────
+# Scale parameters (mean + SD) from unscaled Year_Averages
+short_label_map <- tibble(
+  var = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores",
+          "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate"),
+  Parameter = c("% Coral Cover", "% Macroalgae Cover", "Corallivore",
+                "Herbivore/bioeroding fish", "%N Content", "Ecosystem Respiration",
+                "Maximum Photosynthetic Capacity", "Net Ecosystem Production",
+                "Max Temperature", "Nitrate + Nitrite"),
+  label = c(
+    "Coral cover\n(%)",
+    "Macroalgae cover\n(%)",
+    "Corallivore\n(g m\u207b\u00b2)",
+    "Herbivores\n(g m\u207b\u00b2)",
+    "N content\n(%)",
+    "Respiration\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Pmax\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "NEP\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Max temperature\n(\u00b0C)",
+    "Nitrate+nitrite\n(\u00b5mol L\u207b\u00b9)"
   )
+)
+
+scale_params <- tibble(
+  var = short_label_map$var,
+  mu  = map_dbl(short_label_map$var, ~mean(Year_Averages[[.x]], na.rm = TRUE)),
+  sd  = map_dbl(short_label_map$var, ~sd(Year_Averages[[.x]],   na.rm = TRUE))
+) |>
+  left_join(short_label_map, by = "var")
+
+label_levels <- scale_params$label[match(param_levels, scale_params$Parameter)]
+
+# ── Extract fitted values + raw data from each Bayesian model ───────────────
+get_time_series <- function(model_obj) {
+  mod      <- model_obj$model
+  param    <- model_obj$param
+  resp_var <- as.character(formula(mod)$formula)[2]
+  year_seq <- tibble(Year = seq(min(std_data$Year), max(std_data$Year), by = 0.5))
+  fitted_df <- fitted(mod, newdata = year_seq) |>
+    as_tibble() |>
+    bind_cols(year_seq) |>
+    mutate(Parameter = param)
+  raw_df <- std_data |>
+    select(Year, value = all_of(resp_var)) |>
+    mutate(Parameter = param)
+  list(fitted = fitted_df, raw = raw_df)
+}
+
+all_series <- map(temporal_models, get_time_series)
+
+fitted_all <- map_df(all_series, ~.x$fitted) |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(scale_params |> select(Parameter, mu, sd, label), by = "Parameter") |>
+  mutate(
+    Estimate_orig = Estimate * sd + mu,
+    Q2.5_orig     = Q2.5    * sd + mu,
+    Q97.5_orig    = Q97.5   * sd + mu,
+    label = factor(label, levels = label_levels)
+  )
+
+raw_all <- map_df(all_series, ~.x$raw) |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(scale_params |> select(Parameter, mu, sd, label), by = "Parameter") |>
+  mutate(
+    value_orig = value * sd + mu,
+    label = factor(label, levels = label_levels)
+  )
+
+# ── Bayesian R² annotations ─────────────────────────────────────────────────
+r2_df <- map_df(temporal_models, ~tibble(Parameter = .x$param, r2 = .x$r2)) |>
+  left_join(scale_params |> select(Parameter, label), by = "Parameter") |>
+  mutate(
+    label    = factor(label, levels = label_levels),
+    r2_label = paste0("R\u00b2 = ", round(r2, 2))
+  )
+
+# ── Panel b: Small-multiple time series on original scale ───────────────────
+panel_b <- ggplot() +
+  geom_ribbon(
+    data = fitted_all,
+    aes(x = Year, ymin = Q2.5_orig, ymax = Q97.5_orig, fill = direction),
+    alpha = 0.18
+  ) +
+  geom_line(
+    data = fitted_all,
+    aes(x = Year, y = Estimate_orig, color = direction),
+    linewidth = 0.55
+  ) +
+  geom_point(
+    data = raw_all,
+    aes(x = Year, y = value_orig),
+    size = 0.85, alpha = 0.70, shape = 16, color = "grey25"
+  ) +
+  geom_text(
+    data = r2_df,
+    aes(label = r2_label),
+    x = -Inf, y = Inf,
+    hjust = -0.1, vjust = 1.4,
+    size = 1.8, color = "grey45", fontface = "italic", family = "noto"
+  ) +
+  facet_wrap(~label, scales = "free_y", ncol = 5) +
+  scale_fill_manual(values  = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+  scale_color_manual(values = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+  scale_x_continuous(breaks = c(2008, 2014, 2020)) +
+  labs(x = "Year", y = NULL, tag = "b") +
+  theme_nature() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 5.5),
+    axis.text.y = element_text(size = 5.5)
+  )
+
+# ── Combine and render ───────────────────────────────────────────────────────
+fig7 <- panel_a / panel_b +
+  plot_layout(heights = c(1.05, 1.4)) &
+  theme(plot.background = element_blank())
+
+fig7
+
+ggsave(
+  here("Output", "fig7_temporal_trends.pdf"),
+  plot   = fig7,
+  width  = 183,
+  height = 155,
+  units  = "mm",
+  device = cairo_pdf
+)
 ```
 
 **Model Performance Summary**: The Bayesian temporal trend models showed varying explanatory power across ecosystem variables. Temperature and coral cover trends had the highest R² values (>0.5), indicating highly predictable linear trajectories over time. Metabolic variables (Pmax, Rd, NP) showed moderate explanatory power (R² = 0.2-0.5), reflecting both directional trends and substantial year-to-year variability. Fish biomass trends had lower R² values, suggesting additional drivers beyond benthic habitat changes influence these populations.
