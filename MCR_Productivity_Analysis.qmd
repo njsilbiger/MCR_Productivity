@@ -1490,7 +1490,7 @@ dag_nodes <- tribble(
   "Coral",       "Coral\nCover",             4.5,   3.0,   "#E8F5E9",   "#2E7D32",
   "Algae",       "Fleshy\nAlgae",            7.2,   5.2,   "#E8F5E9",   "#2E7D32",
   "Rd",          "Ecosystem\nRespiration",   7.2,   3.0,   "#EDE7F6",   "#4527A0",
-  "Pmax",        "Ecosystem\nGPP",           7.2,   0.8,   "#EDE7F6",   "#4527A0",
+  "Pmax",        "Ecosystem\nPmax",          7.2,   0.8,   "#EDE7F6",   "#4527A0",
   "N",           "Algal N\nContent",        10.0,   3.0,   "#FFF8E1",   "#E65100",
   "Corallivore", "Corallivore\nFish",        9.8,   4.5,   "#E3F2FD",   "#0D47A1",
   "Herbs",       "Herbivore\nFish",         10.0,   5.2,   "#E3F2FD",   "#0D47A1"
@@ -1897,19 +1897,19 @@ indirect_effects |>
 
 ```{r sem-conditional}
 #| label: fig-sem-conditional
-#| fig-cap: "Key relationships from structural equation model"
+#| fig-cap: "Significant conditional relationships from the Bayesian SEM. Lines show posterior means with 95% credible intervals; points are annual observed values."
 #| fig-width: 10
-#| fig-height: 18
+#| fig-height: 16
 
-# Get unscaling parameters
+# Unscaling parameters
 Yearmodelvalues <- Year_Averages |>
   mutate(
-    logfleshy = log(mean_fleshy),
+    logfleshy    = log(mean_fleshy),
     logproducers = log(mean_alive),
-    logrd = log(Rd),
-    logpmax = log(Pmax),
-    N_percent = log(N_percent),
-    yearresid = yearresid
+    logrd        = log(Rd),
+    logpmax      = log(Pmax),
+    N_percent    = log(N_percent),
+    yearresid    = yearresid
   ) |>
   select(
     Year, meancoral = mean_coral, meanfleshy = mean_fleshy,
@@ -1919,160 +1919,174 @@ Yearmodelvalues <- Year_Averages |>
   ) |>
   drop_na(logcoral)
 
-modelmean <- Yearmodelvalues |>
-  summarise(across(everything(), mean, na.rm = TRUE))
+modelmean <- Yearmodelvalues |> summarise(across(everything(), mean, na.rm = TRUE))
+modelsd   <- Yearmodelvalues |> summarise(across(everything(), sd,   na.rm = TRUE))
 
-modelsd <- Yearmodelvalues |>
-  summarise(across(everything(), sd, na.rm = TRUE))
+# ── Row 1: Climate drivers ─────────────────────────────────────────────────
 
-# Year -> Temperature
+# Year → Temperature
 temp_year <- conditional_effects(brms_sem_full, resp = "temperature", effects = "Year")
 ty_plot <- as_tibble(temp_year$temperature.temperature_Year) |>
   mutate(
-    Year = Year * modelsd$Year + modelmean$Year,
+    Year       = Year       * modelsd$Year        + modelmean$Year,
     estimate__ = estimate__ * modelsd$temperature + modelmean$temperature,
-    lower__ = lower__ * modelsd$temperature + modelmean$temperature,
-    upper__ = upper__ * modelsd$temperature + modelmean$temperature
+    lower__    = lower__    * modelsd$temperature + modelmean$temperature,
+    upper__    = upper__    * modelsd$temperature + modelmean$temperature
   ) |>
   ggplot(aes(x = Year, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = Year, y = Max_temp), alpha = 0.5) +
-  labs(
-    x = "Year",
-    y = "Temperature (°C)",
-    title = "G. Year → Temperature"
-  )
+  labs(x = "Year", y = "Temperature (°C)", title = "Year → Temperature")
 
-# Temperature -> Coral
+# Temperature → Coral Cover
 coral_temp <- conditional_effects(brms_sem_full, resp = "logcoral", effects = "temperature")
 ct_plot <- as_tibble(coral_temp$logcoral.logcoral_temperature) |>
   mutate(
     temperature = temperature * modelsd$temperature + modelmean$temperature,
-    estimate__ = exp(estimate__ * modelsd$logcoral + modelmean$logcoral),
-    lower__ = exp(lower__ * modelsd$logcoral + modelmean$logcoral),
-    upper__ = exp(upper__ * modelsd$logcoral + modelmean$logcoral)
+    estimate__  = exp(estimate__ * modelsd$logcoral + modelmean$logcoral),
+    lower__     = exp(lower__    * modelsd$logcoral + modelmean$logcoral),
+    upper__     = exp(upper__    * modelsd$logcoral + modelmean$logcoral)
   ) |>
   ggplot(aes(x = temperature, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = Max_temp, y = exp(log_coral)), alpha = 0.5) +
   coord_trans(y = "log") +
   scale_y_continuous(breaks = c(1, 5, 10, 20, 40)) +
-  labs(
-    x = "Temperature (°C)",
-    y = "Coral Cover (%)",
-    title = "E. Temperature → Coral"
-  )
+  labs(x = "Temperature (°C)", y = "Coral Cover (%)", title = "Temperature → Coral Cover")
 
-# Coral -> Respiration
+# ── Row 2: Coral → benthos ────────────────────────────────────────────────
+
+# Coral Cover → Fleshy Algae
+fleshy_coral <- conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral")
+fc_plot <- as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) |>
+  mutate(
+    logcoral   = exp(logcoral   * modelsd$logcoral   + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logfleshy  + modelmean$logfleshy),
+    lower__    = exp(lower__    * modelsd$logfleshy  + modelmean$logfleshy),
+    upper__    = exp(upper__    * modelsd$logfleshy  + modelmean$logfleshy)
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), alpha = 0.5) +
+  coord_trans(x = "log", y = "log") +
+  labs(x = "Coral Cover (%)", y = "Fleshy Macroalgae Cover (%)",
+       title = "Coral Cover → Fleshy Algae")
+
+# Coral Cover → Ecosystem Respiration
 rd_coral <- conditional_effects(brms_sem_full, resp = "logrd", effects = "logcoral")
 rc_plot <- as_tibble(rd_coral$logrd.logrd_logcoral) |>
   mutate(
-    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
-    estimate__ = exp(estimate__ * modelsd$logrd + modelmean$logrd),
-    lower__ = exp(lower__ * modelsd$logrd + modelmean$logrd),
-    upper__ = exp(upper__ * modelsd$logrd + modelmean$logrd)
+    logcoral   = exp(logcoral   * modelsd$logcoral + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logrd    + modelmean$logrd),
+    lower__    = exp(lower__    * modelsd$logrd    + modelmean$logrd),
+    upper__    = exp(upper__    * modelsd$logrd    + modelmean$logrd)
   ) |>
   ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Rd), alpha = 0.5) +
   coord_trans(x = "log", y = "log") +
   labs(
     x = "Coral Cover (%)",
     y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    title = "B. Coral → Respiration"
+    title = "Coral Cover → Respiration"
   )
 
-# Coral -> Fleshy Algae
-fleshy_coral <- conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral")
-fc_plot <- as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) |>
-  mutate(
-    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
-    estimate__ = exp(estimate__ * modelsd$logfleshy + modelmean$logfleshy),
-    lower__ = exp(lower__ * modelsd$logfleshy + modelmean$logfleshy),
-    upper__ = exp(upper__ * modelsd$logfleshy + modelmean$logfleshy)
-  ) |>
-  ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_line(linewidth = 1) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
-  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), alpha = 0.5) +
-  coord_trans(x = "log", y = "log") +
-  labs(
-    x = "Coral Cover (%)",
-    y = "Fleshy Macroalgae Cover (%)",
-    title = "F. Coral → Macroalgae"
-  )
+# ── Row 3: Coral → fish ───────────────────────────────────────────────────
 
-# Coral -> Corallivores
+# Coral Cover → Corallivore Fish
 corallivore_coral <- conditional_effects(brms_sem_full, resp = "Corallivore", effects = "logcoral")
 cc_plot <- as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) |>
   mutate(
-    logcoral = exp(logcoral * modelsd$logcoral + modelmean$logcoral),
-    estimate__ = estimate__ * modelsd$Corallivore + modelmean$Corallivore,
-    lower__ = lower__ * modelsd$Corallivore + modelmean$Corallivore,
-    upper__ = upper__ * modelsd$Corallivore + modelmean$Corallivore
+    logcoral   = exp(logcoral * modelsd$logcoral   + modelmean$logcoral),
+    estimate__ = estimate__ * modelsd$Corallivore  + modelmean$Corallivore,
+    lower__    = lower__    * modelsd$Corallivore  + modelmean$Corallivore,
+    upper__    = upper__    * modelsd$Corallivore  + modelmean$Corallivore
   ) |>
   ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Corallivore), alpha = 0.5) +
   coord_trans(x = "log") +
   labs(
     x = "Coral Cover (%)",
     y = expression(atop("Corallivore Fish Biomass", "(g m"^-2*")")),
-    title = "C. Coral → Corallivores"
+    title = "Coral Cover → Corallivore Fish"
   )
 
-# Fleshy Algae -> Herbivores
+# Fleshy Algae → Herbivore Fish
 herbs_fleshy <- conditional_effects(brms_sem_full, resp = "herbs", effects = "logfleshy")
 hf_plot <- as_tibble(herbs_fleshy$herbs.herbs_logfleshy) |>
   mutate(
-    logfleshy = exp(logfleshy * modelsd$logfleshy + modelmean$logfleshy),
-    estimate__ = estimate__ * modelsd$herbs + modelmean$herbs,
-    lower__ = lower__ * modelsd$herbs + modelmean$herbs,
-    upper__ = upper__ * modelsd$herbs + modelmean$herbs
+    logfleshy  = exp(logfleshy  * modelsd$logfleshy + modelmean$logfleshy),
+    estimate__ = estimate__ * modelsd$herbs         + modelmean$herbs,
+    lower__    = lower__    * modelsd$herbs         + modelmean$herbs,
+    upper__    = upper__    * modelsd$herbs         + modelmean$herbs
   ) |>
   ggplot(aes(x = logfleshy, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = mean_fleshy, y = Herbivores), alpha = 0.5) +
   coord_trans(x = "log") +
   labs(
     x = "Fleshy Macroalgae Cover (%)",
     y = expression(atop("Herbivore Fish Biomass", "(g m"^-2*")")),
-    title = "D. Macroalgae → Herbivores"
+    title = "Fleshy Algae → Herbivore Fish"
   )
 
-# Respiration -> N Content
+# ── Row 4: Metabolism → ecosystem function ────────────────────────────────
+
+# Respiration → N Content
 N_Rd <- conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd")
 nr_plot <- as_tibble(N_Rd$Npercent.Npercent_logrd) |>
   mutate(
-    logrd = exp(logrd * modelsd$logrd + modelmean$logrd),
+    logrd      = exp(logrd      * modelsd$logrd    + modelmean$logrd),
     estimate__ = exp(estimate__ * modelsd$Npercent + modelmean$Npercent),
-    lower__ = exp(lower__ * modelsd$Npercent + modelmean$Npercent),
-    upper__ = exp(upper__ * modelsd$Npercent + modelmean$Npercent)
+    lower__    = exp(lower__    * modelsd$Npercent + modelmean$Npercent),
+    upper__    = exp(upper__    * modelsd$Npercent + modelmean$Npercent)
   ) |>
   ggplot(aes(x = logrd, y = estimate__)) +
-  geom_line(linewidth = 1) +
   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
   geom_point(data = Year_Averages, aes(x = Rd, y = N_percent), alpha = 0.5) +
   coord_trans(x = "log", y = "log") +
   labs(
     x = expression("Ecosystem Respiration (mmol O"[2]*" m"^-2*" hr"^-1*")"),
     y = "Nitrogen Content (%)",
-    title = "A. Respiration → N Stock"
+    title = "Respiration → Algal N Content"
   )
 
-# Combine plots with centering for single-plot rows
-# Using plot_layout(widths = c(1, 2, 1)) to ensure centered plots are same size as others
-((plot_spacer() | nr_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) /
-  ((plot_spacer() | rc_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) /
-  (cc_plot + hf_plot) /
-  (ct_plot + fc_plot) /
-  ((plot_spacer() | ty_plot | plot_spacer()) + plot_layout(widths = c(1, 2, 1))) +
-  plot_layout(heights = c(1, 1, 1, 1, 1))
+# Respiration → Ecosystem Pmax
+rd_pmax <- conditional_effects(brms_sem_full, resp = "logpmax", effects = "logrd")
+rp_plot <- as_tibble(rd_pmax$logpmax.logpmax_logrd) |>
+  mutate(
+    logrd      = exp(logrd      * modelsd$logrd   + modelmean$logrd),
+    estimate__ = exp(estimate__ * modelsd$logpmax + modelmean$logpmax),
+    lower__    = exp(lower__    * modelsd$logpmax + modelmean$logpmax),
+    upper__    = exp(upper__    * modelsd$logpmax + modelmean$logpmax)
+  ) |>
+  ggplot(aes(x = logrd, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.25, fill = "#67bed9") +
+  geom_line(linewidth = 1) +
+  geom_point(data = Year_Averages, aes(x = Rd, y = Pmax), alpha = 0.5) +
+  coord_trans(x = "log", y = "log") +
+  labs(
+    x = expression("Ecosystem Respiration (mmol O"[2]*" m"^-2*" hr"^-1*")"),
+    y = expression(atop("Ecosystem Pmax", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    title = "Respiration → Ecosystem Pmax"
+  )
+
+# ── Assemble 4 × 2 grid ───────────────────────────────────────────────────
+(ty_plot | ct_plot) /
+  (fc_plot | rc_plot) /
+  (cc_plot | hf_plot) /
+  (nr_plot | rp_plot) +
+  plot_annotation(tag_levels = "A") &
+  theme_classic(base_size = 11) &
+  theme(plot.title = element_text(size = 10, face = "bold"))
 ```
 
 ## Future Predictions
