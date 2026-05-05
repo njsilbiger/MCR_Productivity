@@ -1396,8 +1396,9 @@ semdata2 <- Year_Averages |>
 
 # Define SEM structure
 bf_temp <- bf(temperature | mi() ~ 1 + Year)
-bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid)
-bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature))
+bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature #+ yearresid
+                   )
+bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature) + mi(logrd)) ####
 bf_logrd <- bf(logrd | mi() ~ 1 + logcoral + mi(temperature))
 bf_herbs <- bf(herbs | mi() ~ 1 + logfleshy)
 bf_corallivore <- bf(Corallivore | mi() ~ 1 + logcoral)
@@ -1474,124 +1475,108 @@ cat("Note: R² not computed for responses with extensive missing data imputation
 
 ```{r sem-dag}
 #| label: fig-sem-dag
-#| fig-cap: "Conceptual diagram of the structural equation model showing causal pathways"
-#| fig-width: 14
-#| fig-height: 9
+#| fig-cap: "Causal pathways in the Bayesian SEM. Arrow width is proportional to the standardized path coefficient (|β|); blue = positive effect, red = negative effect; gray = 95% credible interval crosses zero."
+#| fig-width: 10
+#| fig-height: 7
 
-# Define nodes with positions (using consistent IDs)
-nodes <- tibble(
-  id = c("Year", "Temp", "Coral", "Algae", "Rd", "Pmax", "N", "Corallivore", "Herbivore"),
-  label = c("Year", "Temperature", "Coral\nCover", "Fleshy\nMacroalgae", 
-            "Respiration", "Pmax", "N Content", "Corallivore\nFish", "Herbivore\nFish"),
-  x = c(1, 2, 3.5, 5, 3.5, 3.5, 5, 5, 6.5),
-  y = c(4, 4, 4, 3, 5, 6, 5.5, 2, 1),
-  type = c("Driver", "Driver", "Primary Producer", "Primary Producer",
-           "Metabolism", "Metabolism", "Nutrient", "Consumer", "Consumer")
+pos_col  <- "#1565C0"
+neg_col  <- "#B71C1C"
+nsig_col <- "#AAAAAA"
+
+dag_nodes <- tribble(
+  ~id,           ~label,                    ~x,     ~y,    ~fill,       ~border,
+  "Year",        "Year",                     0,     3.0,   "white",     "#888888",
+  "Temp",        "Temperature",              2.2,   3.0,   "white",     "#888888",
+  "Coral",       "Coral\nCover",             4.5,   3.0,   "#E8F5E9",   "#2E7D32",
+  "Algae",       "Fleshy\nAlgae",            7.2,   5.2,   "#E8F5E9",   "#2E7D32",
+  "Rd",          "Ecosystem\nRespiration",   7.2,   3.0,   "#EDE7F6",   "#4527A0",
+  "Pmax",        "Ecosystem\nGPP",           7.2,   0.8,   "#EDE7F6",   "#4527A0",
+  "N",           "Algal N\nContent",        10.0,   3.0,   "#FFF8E1",   "#E65100",
+  "Corallivore", "Corallivore\nFish",        9.8,   4.5,   "#E3F2FD",   "#0D47A1",
+  "Herbs",       "Herbivore\nFish",         10.0,   5.2,   "#E3F2FD",   "#0D47A1"
 )
 
-# Define edges using consistent IDs
-edges <- tibble(
-  from = c("Year", "Temp", "Temp", "Temp", 
-           "Coral", "Coral", "Coral", "Coral",
-           "Algae", "Rd"),
-  to = c("Temp", "Coral", "Pmax", "Rd",
-         "Algae", "Pmax", "Rd", "Corallivore",
-         "Herbivore", "N"),
-  effect = c("+", "-", "+", "+", 
-             "-", "+", "+", "+",
-             "+", "+"),
-  strength = c("strong", "strong", "moderate", "moderate",
-               "strong", "moderate", "moderate", "moderate",
-               "moderate", "moderate"),
-  edge_label = c("", "", "", "", "", "", "", "", "", "")
-)
+dag_edges <- tribble(
+  ~from,   ~to,           ~est,   ~sig,  ~loff_x, ~loff_y,
+  "Year",  "Temp",        0.462,  TRUE,   0.0,     0.25,
+  "Temp",  "Coral",      -0.558,  TRUE,   0.0,     0.25,
+  "Temp",  "Rd",          0.214,  FALSE,  0.0,     0.0,
+  "Temp",  "Pmax",       -0.158,  FALSE,  0.0,     0.0,
+  "Coral", "Algae",      -0.914,  TRUE,  -0.3,     0.0,
+  "Coral", "Rd",          1.080,  TRUE,   0.0,     0.30,
+  "Coral", "Corallivore", 0.645,  TRUE,   0.2,     0.2,
+  "Coral", "Pmax",       -0.353,  FALSE, -0.3,     0.0,
+  "Rd",    "N",           0.623,  TRUE,   0.0,     0.30,
+  "Rd",    "Pmax",        0.819,  TRUE,  -0.30,    0.0,
+  "Algae", "Herbs",       0.711,  TRUE,   0.0,     0.30
+) |>
+  mutate(
+    direction = if_else(est >= 0, "pos", "neg"),
+    abs_est   = abs(est)
+  ) |>
+  left_join(dag_nodes |> select(id, x, y) |> rename(from = id, x0 = x, y0 = y), by = "from") |>
+  left_join(dag_nodes |> select(id, x, y) |> rename(to   = id, x1 = x, y1 = y), by = "to") |>
+  mutate(mx = (x0 + x1) / 2, my = (y0 + y1) / 2, lbl = sprintf("%.2f", est))
 
-# Create igraph object
-g <- graph_from_data_frame(edges, directed = TRUE, vertices = nodes)
+dag_straight    <- dag_edges |> filter(!(from == "Temp" & to %in% c("Rd", "Pmax")))
+dag_curved_rd   <- dag_edges |> filter(from == "Temp", to == "Rd")
+dag_curved_pmax <- dag_edges |> filter(from == "Temp", to == "Pmax")
 
-# Create plot using ggraph
-set.seed(42)
-p <- ggraph(g, layout = 'manual', x = nodes$x, y = nodes$y) +
-  # Add edges with arrows
-  geom_edge_link(
-    aes(
-      color = effect,
-      edge_width = strength
-    ),
-    arrow = arrow(length = unit(6, 'mm'), type = "closed"),
-    end_cap = circle(20, 'mm'),
-    start_cap = circle(16, 'mm'),
-    alpha = 0.8,
-    linejoin = "mitre"
-  ) +
-  # Add nodes with different shapes
-  geom_node_point(
-    aes(fill = type, shape = type), 
-    size = 20, 
-    color = "white",
-    stroke = 3
-  ) +
-  # Add node labels
-  geom_node_text(
-    aes(label = label), 
-    size = 4, 
-    fontface = "bold",
-    color = "white",
-    lineheight = 0.85
-  ) +
-  # Customize edge colors
-  scale_edge_color_manual(
-    values = c("+" = "#4DBBD5", "-" = "#E64B35"),
-    labels = c("+" = "Positive", "-" = "Negative"),
-    name = "Effect Direction"
-  ) +
-  scale_edge_width_manual(
-    values = c("strong" = 3, "moderate" = 2, "weak" = 1),
-    guide = "none"
-  ) +
-  # Customize node colors and shapes
-  scale_fill_manual(
-    values = c(
-      "Driver" = "#FFA500",
-      "Primary Producer" = "#228B22",
-      "Metabolism" = "#9370DB",
-      "Nutrient" = "#FFD700",
-      "Consumer" = "#4169E1"
-    ),
-    name = "Component Type"
-  ) +
-  scale_shape_manual(
-    values = c(
-      "Driver" = 22,           # Square
-      "Primary Producer" = 21, # Circle
-      "Metabolism" = 24,       # Triangle
-      "Nutrient" = 23,         # Diamond
-      "Consumer" = 21          # Circle
-    ),
-    name = "Component Type"
-  ) +
-  labs(
-    title = "Structural Equation Model: Reef Ecosystem Dynamics",
-    subtitle = "Arrow width indicates effect strength; arrow color indicates positive (teal) or negative (red) relationships"
-  ) +
-  theme_void() +
+dag_arr <- arrow(length = unit(3.5, "mm"), type = "closed")
+
+ggplot() +
+  geom_segment(data = filter(dag_straight,  sig),
+    aes(x = x0, y = y0, xend = x1, yend = y1, color = direction, linewidth = abs_est),
+    alpha = 0.82, arrow = dag_arr, lineend = "butt") +
+  geom_segment(data = filter(dag_straight, !sig),
+    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
+    color = nsig_col, alpha = 0.70, arrow = dag_arr, lineend = "butt") +
+  geom_label(data = filter(dag_straight,  sig),
+    aes(x = mx + loff_x, y = my + loff_y, label = lbl, color = direction),
+    size = 3.0, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
+  geom_label(data = filter(dag_straight, !sig),
+    aes(x = mx + loff_x, y = my + loff_y, label = lbl),
+    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
+  geom_curve(data = dag_curved_rd,
+    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
+    color = nsig_col, alpha = 0.70, curvature = -0.28, arrow = dag_arr, lineend = "butt") +
+  geom_label(data = dag_curved_rd,
+    aes(x = mx + 0.3, y = my + 0.85, label = lbl),
+    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
+  geom_curve(data = dag_curved_pmax,
+    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
+    color = nsig_col, alpha = 0.70, curvature = 0.30, arrow = dag_arr, lineend = "butt") +
+  geom_label(data = dag_curved_pmax,
+    aes(x = mx - 0.1, y = my - 0.85, label = lbl),
+    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
+  {lapply(seq_len(nrow(dag_nodes)), function(i) {
+    nd <- dag_nodes[i, ]
+    geom_label(data = nd, aes(x = x, y = y, label = label),
+               fill = nd$fill, color = nd$border, size = 3.2,
+               fontface = "bold", lineheight = 0.9, label.size = 0.75,
+               label.padding = unit(0.45, "lines"), label.r = unit(5, "pt"),
+               show.legend = FALSE)
+  })} +
+  scale_color_manual(values = c("pos" = pos_col, "neg" = neg_col),
+                     labels = c("pos" = "Positive", "neg" = "Negative"),
+                     name = "Effect direction") +
+  scale_linewidth(range = c(0.8, 3.2), guide = "none") +
+  labs(caption = "Standardized β on arrows  ·  gray = 95% CI crosses zero") +
+  theme_void(base_size = 12) +
   theme(
-    plot.title = element_text(size = 20, face = "bold", hjust = 0.5, margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "gray40", margin = margin(b = 20)),
+    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 9, margin = margin(t = 8)),
     legend.position = "bottom",
-    legend.box = "horizontal",
-    legend.title = element_text(size = 13, face = "bold"),
-    legend.text = element_text(size = 12),
+    legend.title    = element_text(size = 10, face = "bold"),
+    legend.text     = element_text(size = 9),
     plot.background = element_rect(fill = "white", color = NA),
-    plot.margin = margin(20, 20, 20, 20)
+    plot.margin     = margin(15, 20, 10, 20)
   ) +
-  guides(
-    fill = guide_legend(override.aes = list(size = 10)),
-    shape = guide_legend(override.aes = list(size = 10))
-  ) +
-  coord_fixed(ratio = 1, xlim = c(0.3, 7.2), ylim = c(0.3, 6.7))
-
-p
+  guides(color = guide_legend(override.aes = list(linewidth = 1.5))) +
+  coord_cartesian(xlim = c(-0.5, 11.5), ylim = c(-0.3, 6.3))
 ```
 
 ## SEM Path Coefficients
