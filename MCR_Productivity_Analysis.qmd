@@ -544,7 +544,7 @@ To project ecosystem trajectories under realistic climate forcing, monthly sea s
 
 Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment.
 
-Uncertainty sources from CMIP6 climate models and from the SEM are handled separately to remain interpretable. For the **Temperature panel**, the ensemble p10–p90 range across the five bias-corrected models is shown directly as the uncertainty ribbon — this reflects purely inter-model structural uncertainty in future warming. For the **ecological variable panels**, a single deterministic ensemble-median temperature trajectory is propagated through all 3,000 Bayesian SEM posterior draws. Because all draws use identical temperature inputs, the resulting 95% credible interval reflects SEM path-coefficient uncertainty only (parameter uncertainty), not climate-model structural uncertainty. The non-temperature secular trend (*yearresid* — residual of calendar year after removing the temperature trend, capturing the 2010 disturbance and other non-warming drivers) used observed z-scores for 2006–2025, tapered linearly to zero by 2035, and was set to zero from 2036 onward. The historical period (2005–2025) therefore shows SEM predictions driven by the CMIP6 historical ensemble-median temperature plus the observed secular trend; open circles show the directly observed MCR LTER ecosystem state.
+Uncertainty sources from CMIP6 climate models and from the SEM are handled separately to remain interpretable. For the **Temperature panel**, the ensemble p10–p90 range across the five bias-corrected models is shown directly as the uncertainty ribbon — this reflects purely inter-model structural uncertainty in future warming. For the **ecological variable panels**, a single deterministic ensemble-median temperature trajectory is propagated through all 3,000 Bayesian SEM posterior draws. Because all draws use identical temperature inputs, the resulting 95% credible interval reflects SEM path-coefficient uncertainty only (parameter uncertainty), not climate-model structural uncertainty. The non-temperature secular trend (*yearresid* — residual of calendar year after removing the temperature trend, capturing the 2010 disturbance and other non-warming drivers) is held constant at its observed 2025 z-score for the entire projection period (2026–2100), so that all scenario-dependent divergence from 2026 onward is driven exclusively by CMIP6 temperature anomalies relative to the 2025 baseline. The historical period (2005–2025) shows observed ecosystem values directly in all panels — lines connect the observed annual values and open circles mark individual observations — without SEM interpolation.
 
 ## Software and Reproducibility
 
@@ -2089,17 +2089,35 @@ get_model_temp_matrix <- function(scenario_name) {
 # ── CMIP6 ensemble temperature summary (for Temperature panel display) ────────
 # Returns median, p10, and p90 across models for each scenario/year.
 get_temp_ensemble_summary <- function(scenario_name) {
-  temp_raw <- get_model_temp_matrix(scenario_name)   # n_models × 96
-  tibble(
+  temp_raw <- get_model_temp_matrix(scenario_name)   # n_models × 96 (2005:2100)
+
+  # Historical (2005–2025): observed MCR temperatures, zero ribbon — mirrors the
+  # two-period approach used for ecological variables so all panels are consistent.
+  hist_rows <- Year_Averages |>
+    filter(Year %in% 2005:2025) |>
+    arrange(Year) |>
+    transmute(
+      scenario = scenario_name,
+      variable = "Temperature",
+      year     = Year,
+      median   = Max_temp,
+      lo95     = Max_temp, hi95 = Max_temp,
+      lo50     = Max_temp, hi50 = Max_temp
+    )
+
+  # Projection (2026–2100): CMIP6 ensemble median + p10/p90 inter-model spread
+  proj_rows <- tibble(
     scenario = scenario_name,
     variable = "Temperature",
-    year     = 2005:2100,
-    median   = apply(temp_raw, 2, median),
-    lo95     = apply(temp_raw, 2, quantile, 0.10),
-    hi95     = apply(temp_raw, 2, quantile, 0.90),
-    lo50     = apply(temp_raw, 2, quantile, 0.25),
-    hi50     = apply(temp_raw, 2, quantile, 0.75)
+    year     = 2026:2100,
+    median   = apply(temp_raw[, 22:96, drop = FALSE], 2, median),
+    lo95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.10),
+    hi95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.90),
+    lo50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.25),
+    hi50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.75)
   )
+
+  bind_rows(hist_rows, proj_rows)
 }
 
 # ── SEM propagation for ecological variables ──────────────────────────────────
@@ -2245,7 +2263,7 @@ wb_plot_tbl <- wb_proj_tbl |>
 
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
-#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from five coupled CMIP6 ScenarioMIP models (ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model). Uncertainty sources are separated by panel. **Temperature panel:** ribbon shows the inter-model spread (p10–p90) across the five bias-corrected CMIP6 models smoothed with a 5-year centred running mean; line shows the ensemble median smoothed with an 11-year centred running mean to emphasise the forced warming trend. **Ecological variable panels:** a single deterministic ensemble-median temperature trajectory was propagated through all 3,000 Bayesian SEM posterior draws; ribbon shows the 95% credible interval reflecting SEM path-coefficient uncertainty only (climate-model structural uncertainty is not propagated into the ecological variables, keeping the two sources of uncertainty interpretable separately); both median lines and ribbons are smoothed with a 5-year centred running mean in the projection period for visual clarity. **Historical period (2005–2025, unshaded):** lines and ribbons show observed values directly (no smoothing applied); open circles show observed annual ecosystem state from the MCR LTER dataset. **Projection period (2026–2100, grey shading):** lines show the smoothed posterior median; ribbons show the smoothed 95% credible interval. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
+#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from five coupled CMIP6 ScenarioMIP models (ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model). Uncertainty sources are separated by panel. **Temperature panel:** ribbon shows the inter-model spread (p10–p90) across the five bias-corrected CMIP6 models smoothed with a 5-year centred running mean; line shows the ensemble median smoothed with an 11-year centred running mean to emphasise the forced warming trend. **Ecological variable panels:** a single deterministic ensemble-median temperature trajectory was propagated through all 3,000 Bayesian SEM posterior draws; ribbon shows the 95% credible interval reflecting SEM path-coefficient uncertainty only (climate-model structural uncertainty is not propagated into the ecological variables, keeping the two sources of uncertainty interpretable separately); both median lines and ribbons are smoothed with a 5-year centred running mean in the projection period for visual clarity. **Historical period (2005–2025, unshaded):** all panels show observed values directly as a connected line through the open circles (no ribbon, no smoothing); this applies to both Temperature (observed MCR annual maximum SST) and all ecological variables. **Projection period (2026–2100, grey shading):** lines show the smoothed posterior median; ribbons show the smoothed 95% credible interval. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
 #| fig-width: 9
 #| fig-height: 8
 
@@ -2490,7 +2508,7 @@ The respiration–nitrogen pathway (β = 0.62, 95% CI 0.24–1.01) provides spec
 
 ## Indirect Effects Along Trophic Pathways
 
-The two causal chains through community composition — Coral → Fleshy Algae → Herbivores, and Coral → Corallivores — show a coherent but ecologically nuanced response to warming. Corallivore fish biomass declined in parallel with coral cover (β = 0.65, 95% CI 0.25–1.04), as expected for a guild with obligate dietary dependence on live coral. Herbivore fish biomass, by contrast, increased over the same period (β_indirect temperature = +0.34, 95% CI 0.06–0.77), driven by expanding macroalgal food resources. At first glance this might seem compensatory, but the two responses operate through distinct pathways and the herbivore increase does not prevent macroalgal expansion — instead, the macroalgae–herbivore relationship represents bottom-up resource tracking rather than top-down regulation of algal abundance. Fleshy macroalgae expanded despite (and indeed facilitated) herbivore increases, suggesting that herbivory alone is insufficient to prevent phase-shift dynamics when coral structural complexity is lost.
+The two causal chains through community composition — Coral → Fleshy Algae → Herbivores, and Coral → Corallivores — show a coherent but ecologically nuanced response to warming. Corallivore fish biomass declined in parallel with coral cover (β = 0.65, 95% CI 0.26–1.02), as expected for a guild with obligate dietary dependence on live coral. Herbivore fish biomass, by contrast, increased over the same period (β_indirect temperature = +0.35, 95% CI 0.14–0.66), driven by expanding macroalgal food resources. At first glance this might seem compensatory, but the two responses operate through distinct pathways and the herbivore increase does not prevent macroalgal expansion — instead, the macroalgae–herbivore relationship represents bottom-up resource tracking rather than top-down regulation of algal abundance. Fleshy macroalgae expanded despite (and indeed facilitated) herbivore increases, suggesting that herbivory alone is insufficient to prevent phase-shift dynamics when coral structural complexity is lost.
 
 These trophic dynamics have practical management implications. The consistent dominance of indirect (coral-mediated) over direct temperature effects across all six ecosystem variables implies that interventions targeting coral — whether through bleaching mitigation, shade structures, or active restoration — should in principle intercept the cascades before they propagate to fish assemblages, metabolism, and nutrient cycling. Local management of herbivore populations (e.g., controlling sea urchin or fish harvest) may be insufficient on its own if the primary leverage point is further upstream in the causal chain. Conversely, the fact that multiple ecosystem properties are coupled through a single hub suggests that successful coral recovery could trigger broad functional recovery, rather than requiring separate management of each endpoint.
 
@@ -2498,7 +2516,7 @@ These trophic dynamics have practical management implications. The consistent do
 
 The MCR LTER Site 1 backreef trajectory is consistent with, but mechanistically more specific than, the global picture of reef decline. Widespread reductions in net community calcification (e.g., Albright et al. 2018; DeCarlo et al. 2017) and increasing heterotrophy (e.g., Kaneohe Bay; Shamberger et al. 2011) have been documented across ocean basins, but few studies have linked these to structural community change through an explicit causal framework. Our SEM results support a structural interpretation: metabolic decline tracks coral loss with a strong, credible path coefficient, whereas direct temperature effects are ambiguous. This suggests that the mechanistic driver of metabolic change at MCR is more closely analogous to the deforestation narrative than to the thermal inhibition narrative, with implications for projections: reef metabolism may recover if and when coral cover recovers, even if temperatures remain elevated.
 
-The CMIP6 SSP scenario projections extend this finding forward in time. The ~6-fold contrast in coral cover at 2100 between SSP1-2.6 (~5%) and SSP5-8.5 (~1%) illustrates the degree to which emission trajectory controls long-term reef outcomes — a result consistent with global projections of mass coral bleaching frequency under high-emissions scenarios (Hoegh-Guldberg et al. 2018; Hughes et al. 2017). Critically, the scenarios remain indistinguishable in their reef consequences until approximately 2040–2050, implying that the next two decades of warming are largely committed regardless of mitigation effort. The divergence thereafter, however, highlights that aggressive emissions reduction remains the most effective lever for preserving reef function at the centennial timescale. The SSP1-2.6 projection — in which MCR coral cover stabilises near its 2025 level rather than collapsing further — represents the ecosystem consequence of achieving the Paris Agreement ~1.5–2°C target and provides an ecologically grounded argument for that policy goal.
+The CMIP6 SSP scenario projections extend this finding forward in time. The ~9.5-fold contrast in coral cover at 2100 between SSP1-2.6 (~9.5%) and SSP5-8.5 (~1%) illustrates the degree to which emission trajectory controls long-term reef outcomes — a result consistent with global projections of mass coral bleaching frequency under high-emissions scenarios (Hoegh-Guldberg et al. 2018; Hughes et al. 2017). Critically, the scenarios remain indistinguishable in their reef consequences until approximately 2040–2060, implying that the next two decades of warming are largely committed regardless of mitigation effort. The divergence thereafter, however, highlights that aggressive emissions reduction remains the most effective lever for preserving reef function at the centennial timescale. The SSP1-2.6 projection — in which MCR coral cover shows modest recovery toward ~9.5% by 2100, above its degraded 2025 level of 6.8%, driven by the slight forced temperature cooling characteristic of that scenario — represents the ecosystem consequence of achieving the Paris Agreement ~1.5–2°C target and provides an ecologically grounded argument for that policy goal.
 
 ## Limitations and Future Directions
 
