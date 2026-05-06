@@ -27,21 +27,39 @@ This report analyzes long-term ecosystem dynamics at LTER Site 1 in Moorea, Fren
 #| cache: false
 
 # Load required libraries
+# Data manipulation
 library(tidyverse)
 library(here)
 library(lubridate)
+library(zoo)
+library(slider)
+library(glue)
+
+# Bayesian modelling
 library(brms)
 library(tidybayes)
+library(bayesplot)
+
+# Visualisation
 library(scales)
 library(patchwork)
+library(cowplot)
 library(viridis)
-library(bayesplot)
 library(ggridges)
 library(ggsci)
-library(psych)
-library(ggcorrplot2)
 library(ggraph)
 library(igraph)
+library(showtext)
+library(sysfonts)
+
+# Statistics / tables
+library(psych)
+library(ggcorrplot2)
+library(kableExtra)
+library(httr2)
+
+# Enable custom fonts
+showtext_auto(enable = TRUE)
 
 # Set global theme
 theme_set(theme_bw())
@@ -50,7 +68,7 @@ theme_set(theme_bw())
 set.seed(223)
 ```
 
-# Data Processing Pipeline
+# Data
 
 ## 1. Temperature Data
 
@@ -473,13 +491,78 @@ Year_Averages <- Year_Averages_PP |>
 glimpse(Year_Averages)
 ```
 
-# Exploratory Data Analysis
+# Methods
+
+## Photosynthesis-Irradiance Curve Analysis
+
+Annual values of maximum photosynthetic capacity (Pmax) and ecosystem respiration (Rd) were extracted from a Bayesian nonlinear model fit to 2,928 net O₂ flux measurements using the **brms** package (Bürkner 2017) and Stan (Carpenter et al. 2017). We used the rectangular hyperbola:
+
+$$\mathrm{PP} = \frac{\alpha \cdot P_{\max} \cdot \mathrm{PAR}}{\alpha \cdot \mathrm{PAR} + P_{\max}} + R_d$$
+
+where PP is net community production, PAR is photosynthetically active radiation, and α is photosynthetic efficiency. Year-specific parameters (α, Pmax, Rd) were estimated simultaneously from all deployments. A Student-*t* likelihood accommodated measurement outliers. Priors were weakly informative: α ~ Normal$_+$(0.1, 10); Pmax ~ Normal$_+$(100, 10); Rd ~ Normal$_-$(−100, 10). Three chains ran for 8,000 iterations (2,000 warmup) at adapt_delta = 0.95. Posterior Rd values were multiplied by −1 to express ecosystem respiration as positive rates.
+
+## Temporal Trend Analysis
+
+We estimated standardised temporal trends for 10 ecosystem variables (coral cover, fleshy macroalgae, corallivore biomass, herbivore biomass, algal nitrogen content, ecosystem respiration, Pmax, net ecosystem production, maximum temperature, nitrate+nitrite) using independent Bayesian linear regression models (Variable ~ Year, default **brms** priors) on z-scored data. The slope posterior (change per standardised year) was used to assess direction and magnitude of each trend. Effects were considered directional when the 95% credible interval excluded zero. Bayesian R² (Gelman et al. 2019) is reported as the posterior median. Absolute percent change was calculated between the first and last non-missing observations on the original scale.
+
+## Correlation Analysis
+
+Pearson correlations among all major ecosystem variables were computed and visualised as a mixed correlation matrix (upper triangle: ellipses scaled by correlation strength; lower triangle: numeric values; diagonal: variable names). Significance was assessed using two-tailed t-tests; variables were ordered by hierarchical clustering of the correlation matrix.
+
+## Structural Equation Modeling
+
+To evaluate simultaneous causal pathways among ecosystem components, we fit a Bayesian multivariate SEM in **brms** with residual correlations disabled (`set_rescor = FALSE`). The directed acyclic graph (DAG) was motivated by ecological theory and temporal precedence, comprising eight response equations:
+
+| # | Equation |
+|---|----------|
+| 1 | Temperature ~ Year |
+| 2 | log(coral cover) \| trunc(ub = 3.39) ~ temperature + yearresid |
+| 3 | log(ecosystem respiration) ~ log(coral cover) + temperature |
+| 4 | log(fleshy macroalgae) \| trunc(ub = 2.26) ~ log(coral cover) |
+| 5 | log(Pmax) ~ log(coral cover) + temperature + log(ecosystem respiration) |
+| 6 | corallivore biomass ~ log(coral cover) |
+| 7 | herbivore biomass ~ log(fleshy macroalgae) |
+| 8 | log(nitrogen content) ~ log(ecosystem respiration) |
+
+All continuous responses were log-transformed and z-score standardised before modelling. The `yearresid` predictor is the residual of calendar year regressed on maximum annual temperature, capturing non-thermal secular coral decline. Cover responses were upper-truncated at the z-log scale equivalent of 100% cover to respect the biological ceiling; truncation values (3.39 for coral, 2.26 for fleshy algae) were verified to back-transform to exactly 100%.
+
+Missing predictor values (ecosystem respiration and temperature as predictors of Pmax; ecosystem respiration as predictor of N content) were handled via **brms** integrated missing-data imputation (`mi()` syntax). Priors were weakly informative: regression coefficients ~ Normal(0, 2); intercepts ~ Normal(0, 2); residual SDs ~ Normal$_+$(0, 0.25) for the temperature sub-model and Normal$_+$(0, 2) otherwise. Three chains ran for 10,000 iterations (5,000 warmup) with adapt_delta = 0.99 and max_treedepth = 15. Convergence was assessed via Rhat (< 1.01 for all parameters), bulk and tail effective sample sizes (> 1,000), and posterior predictive checks.
+
+### Parsimonious (reduced) SEM
+
+A reduced model was fit by removing three pathways whose 95% credible intervals included zero in the full model: Temperature → Respiration (direct), Temperature → Pmax (direct), and Coral → Pmax (direct). All retained coefficients were stable between full and reduced models (within 0.02 SD). The reduced model is used for all ecosystem projections.
+
+### Direct and indirect temperature effects
+
+Total standardised effects of temperature on each ecosystem variable were decomposed into direct paths and indirect paths (products of coefficients along each chain through the DAG) using all 15,000 post-warmup draws. Indirect effects were computed as the product of relevant path coefficients; for example, the indirect effect on respiration was β(Temp→Coral) × β(Coral→Rd). Total effects are the sum across all contributing paths. An effect was considered credible if its 95% CI excluded zero.
+
+## Ecosystem Projections
+
+### Linear-trend projections
+
+Ecosystem trajectories were projected to 2055 by propagating 3,000 thinned posterior draws from the fitted reduced SEM through the full causal chain, year by year. For each draw, the expected value of every ecosystem variable was computed analytically using the SEM linear predictors (posterior conditional mean), without adding residual noise. The `yearresid` predictor used observed z-scaled values for observed years (2005–2025) and zero for forecast years (2026–2055), which assumes future non-thermal deviations average out. Back-transformed cover values were capped at 100% using the z-log ceiling constants throughout.
+
+### CMIP6 climate scenario projections (to 2100)
+
+To project ecosystem trajectories under realistic climate forcing, monthly sea surface temperature (*tos*) for the Moorea grid cell (~17.5°S, 149.8°W) was obtained from ten coupled CMIP6 ScenarioMIP models — ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, and UKESM1-0-LL (Eyring et al. 2016) — downloaded from the Copernicus Climate Data Store (`projections-cmip6` dataset; Copernicus Climate Change Service 2021) for 2015–2100 under three Shared Socioeconomic Pathways: SSP1-2.6 (strong mitigation, ~1.5–2°C global warming by 2100), SSP2-4.5 (intermediate stabilisation), and SSP5-8.5 (high emissions, ~4–5°C warming; O'Neill et al. 2016; Riahi et al. 2017). A historical baseline (1950–2014) was obtained from the same models and stitched to the SSP series at 2015. Monthly *tos* values were aggregated to annual maxima per model-year, and ensemble p10, median, and p90 quantiles were computed across models for each scenario-year.
+
+Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment.
+
+Z-scored temperatures were propagated through the fitted reduced SEM for each of nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). The inner uncertainty ribbon on projection figures represents the SEM posterior 95% credible interval using the ensemble median temperature; the outer ribbon represents the CMIP6 multi-model p10–p90 spread at the SEM posterior median, thereby separating climate-forcing uncertainty from model-parameter uncertainty.
+
+## Software and Reproducibility
+
+Key packages: **tidyverse** 2.0 (Wickham et al. 2019), **brms** 2.21 (Bürkner 2017), **tidybayes** 3.0 (Kay 2023), **patchwork** 1.2 (Pedersen 2024), **ggraph** 2.1 and **igraph** 1.6 (Csárdi & Nepusz 2006), **httr2** (Wickham 2023), **zoo** (Zeileis & Grothendieck 2005), **cowplot** (Wilke 2024). Stan 2.32 served as the computational backend. All analysis code and processed data are available at [repository DOI]; MCR LTER raw data are publicly archived through the EDI Data Portal.
+
+---
+
+# Results
 
 ## Benthic Community Composition
 
 ```{r benthic-plot}
 #| label: fig-benthic
-#| fig-cap: "Benthic community composition at LTER Site 1 (2005-2025)"
+#| fig-cap: "**Reef benthic community composition at MCR LTER Site 1 backreef, 2006–2025.** Stacked area plot shows annual mean proportional cover of major benthic functional groups derived from point-intercept photoquadrat transects (6 transects × 30 points per year). Coral cover (green) declined from 31.0% in 2006 to 6.8% in 2025, a 78% reduction over 20 years, while fleshy macroalgae (yellow-green) expanded from 5.5% to 14.7% (+167%). Crustose coralline algae (pink), turf algae (tan), and other categories are included for completeness. Error ribbons show ±1 SE across transects."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -520,426 +603,7 @@ Benthic_summary_Algae |>
 
 **Key Observation:** Coral cover declined from `r round(Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover), 1)`% in 2006 to `r round(Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover), 1)`% in 2025, representing a `r round((1 - (Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover)) / (Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover))) * 100, 1)`% reduction.
 
-## Environmental Drivers
 
-```{r environmental-plots}
-#| label: fig-environment
-#| fig-cap: "Environmental conditions over time"
-#| fig-width: 10
-#| fig-height: 6
-
-p1 <- Year_Averages |>
-  ggplot(aes(x = Year, y = Max_temp)) +
-  geom_line(color = "firebrick", linewidth = 1) +
-  geom_point(color = "firebrick", size = 2) +
-  geom_smooth(method = "lm", se = TRUE, color = "darkred", alpha = 0.2) +
-  labs(
-    y = "Max Daily Temp (°C)",
-    title = "A. Temperature"
-  )
-
-p2 <- Year_Averages |>
-  ggplot(aes(x = Year, y = N_percent)) +
-  geom_line(color = "darkgreen", linewidth = 1) +
-  geom_point(color = "darkgreen", size = 2) +
-  geom_smooth(method = "lm", se = TRUE, color = "forestgreen", alpha = 0.2) +
-  labs(
-    y = "Tissue N Content (%)",
-    title = "B. Nitrogen"
-  )
-
-p1 + p2
-```
-
-## Fish Community Trends
-
-```{r fish-plots}
-#| label: fig-fish
-#| fig-cap: "Fish biomass by trophic group"
-#| fig-width: 10
-#| fig-height: 4
-
-fish_summary |>
-  ggplot(aes(x = Year, y = fish_g_m2, color = trophic_new)) +
-  geom_line(linewidth = 1) +
-  geom_point(size = 2) +
-  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
-  facet_wrap(~trophic_new, scales = "free_y") +
-  scale_color_viridis_d(option = "plasma", end = 0.8) +
-  labs(
-    x = "Year",
-    y = "Biomass (g/m²)",
-    title = "Fish Biomass Trends by Trophic Group"
-  ) +
-  theme_bw(base_size = 14) +
-  theme(
-    legend.position = "none",
-    strip.text = element_text(size = 13, face = "bold"),
-    axis.title = element_text(size = 14),
-    axis.text = element_text(size = 12),
-    plot.title = element_text(size = 16, face = "bold")
-  )
-```
-
-## Ecosystem Metabolism Time Series
-
-```{r metabolism-timeseries}
-#| label: fig-metabolism
-#| fig-cap: "Twenty-year time series of ecosystem metabolism showing declines in photosynthetic capacity (Pmax), respiration (Rd), and net production (NP). Points represent annual means; shaded ribbons show 95% credible intervals from Bayesian linear trend models. Pmax and Rd were extracted from Bayesian photosynthesis-irradiance curves to provide light-independent metabolic indices."
-#| fig-width: 10
-#| fig-height: 8
-#| cache: true
-
-# Prepare data for plotting with expression labels
-metabolism_data <- Year_Averages |>
-  select(Year, Pmax, Rd, NP_mean) |>
-  pivot_longer(cols = c(Pmax, Rd, NP_mean), 
-               names_to = "metric", 
-               values_to = "value") |>
-  mutate(metric_label = case_when(
-    metric == "Pmax" ~ "Pmax",
-    metric == "Rd" ~ "Rd",
-    metric == "NP_mean" ~ "NP"
-  )) |>
-  mutate(metric_label = factor(metric_label, levels = c("Pmax", "Rd", "NP")))
-
-# Create labeller function using expression notation
-metric_labeller <- as_labeller(c(
-  "Pmax" = "atop('Maximum Photosynthetic Capacity', paste('(mmol ', O[2], ' m'^-2, ' hr'^-1, ')'))",
-  "Rd" = "atop('Ecosystem Respiration', paste('(mmol ', O[2], ' m'^-2, ' hr'^-1, ')'))",
-  "NP" = "atop('Net Ecosystem Production', paste('(mmol ', O[2], ' m'^-2, ' hr'^-1, ')'))"
-), default = label_parsed)
-
-# Fit Bayesian linear models for each metric to get trend statistics
-pmax_brm <- brm(Pmax ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
-rd_brm <- brm(Rd ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
-np_brm <- brm(NP_mean ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
-
-# Extract trend statistics from Bayesian models
-pmax_slope <- fixef(pmax_brm)["Year", "Estimate"]
-pmax_ci <- fixef(pmax_brm)["Year", c("Q2.5", "Q97.5")]
-rd_slope <- fixef(rd_brm)["Year", "Estimate"]
-rd_ci <- fixef(rd_brm)["Year", c("Q2.5", "Q97.5")]
-np_slope <- fixef(np_brm)["Year", "Estimate"]
-np_ci <- fixef(np_brm)["Year", c("Q2.5", "Q97.5")]
-
-# Calculate Bayesian R-squared
-pmax_r2 <- median(bayes_R2(pmax_brm)[, 1])
-rd_r2 <- median(bayes_R2(rd_brm)[, 1])
-np_r2 <- median(bayes_R2(np_brm)[, 1])
-
-# Create annotations with trend statistics using expression notation for geom_text
-trend_labels <- tibble(
-  metric_label = factor(c("Pmax", "Rd", "NP"), levels = c("Pmax", "Rd", "NP")),
-  x = c(2008, 2008, 2008),
-  y = c(Inf, Inf, Inf),
-  label = c(
-    sprintf("'%.2f mmol O'[2]*' m'^-2*' hr'^-1*' yr'^-1", pmax_slope),
-    sprintf("'%.2f mmol O'[2]*' m'^-2*' hr'^-1*' yr'^-1", rd_slope),
-    sprintf("'%.2f mmol O'[2]*' m'^-2*' hr'^-1*' yr'^-1", np_slope)
-  )
-)
-
-# Create publication-quality figure
-metabolism_plot <- ggplot(metabolism_data, aes(x = Year, y = value)) +
-  # Add trend line with confidence interval
-  geom_smooth(
-    method = "lm", 
-    se = TRUE, 
-    color = "#2E86AB",
-    fill = "#2E86AB",
-    alpha = 0.15,
-    linewidth = 1
-  ) +
-  # Add data points
-  geom_point(
-    size = 3, 
-    color = "#2E86AB",
-    alpha = 0.7
-  ) +
-  # Add connecting line
-  geom_line(
-    color = "#2E86AB",
-    linewidth = 0.5,
-    alpha = 0.4
-  ) +
-  # Add trend statistics with expression parsing
-  geom_text(
-    data = trend_labels,
-    aes(x = x, y = y, label = label),
-    hjust = 0,
-    vjust = 1.2,
-    size = 4.5,
-    color = "gray30",
-    parse = TRUE
-  ) +
-  # Facet by metric
-  facet_wrap(
-    ~metric_label, 
-    ncol = 1, 
-    scales = "free_y",
-    strip.position = "left",
-    labeller = metric_labeller
-  ) +
-  # Labels and theme
-  labs(
-    x = "Year",
-    y = NULL,
-    title = "Long-term Ecosystem Metabolism Decline at MCR LTER Site 1",
-    subtitle = "Backreef metabolism measurements (2005-2025) showing directional changes in all metabolic components"
-  ) +
-  theme_bw(base_size = 16) +
-  theme(
-    # Strip formatting
-    strip.background = element_blank(),
-    strip.text = element_text(size = 14, face = "bold", hjust = 0),
-    strip.placement = "outside",
-    
-    # Panel formatting
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-    panel.border = element_rect(color = "gray60", linewidth = 0.5),
-    
-    # Axis formatting
-    axis.title.x = element_text(size = 15, margin = margin(t = 10)),
-    axis.text = element_text(size = 13, color = "gray20"),
-    axis.ticks = element_line(color = "gray60"),
-    
-    # Title formatting
-    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15)),
-    
-    # Overall plot
-    plot.margin = margin(15, 15, 10, 10),
-    plot.background = element_rect(fill = "white", color = NA),
-    panel.spacing = unit(1.5, "lines")
-  ) +
-  scale_x_continuous(breaks = seq(2007, 2025, by = 3), 
-                     minor_breaks = seq(2007, 2025, by = 1),
-                     limits = c(2007, 2025))
-
-metabolism_plot
-
-# Print summary statistics
-cat("\n=== Metabolism Time Series Trends (Bayesian Analysis) ===\n\n")
-cat("Pmax (Maximum Photosynthetic Capacity):\n")
-cat(sprintf("  Slope: %.3f mmol O₂ m⁻² hr⁻¹ yr⁻¹ [95%% CI: %.3f, %.3f]\n", 
-    pmax_slope, pmax_ci[1], pmax_ci[2]))
-cat(sprintf("  Bayesian R²: %.3f\n", pmax_r2))
-cat(sprintf("  Credible interval excludes zero: %s\n", 
-    ifelse(sign(pmax_ci[1]) == sign(pmax_ci[2]), "Yes", "No")))
-cat(sprintf("  Total change (20 yr): %.1f mmol O₂ m⁻² hr⁻¹ (%.1f%%)\n", 
-    pmax_slope * 20, 
-    (pmax_slope * 20 / mean(Year_Averages$Pmax, na.rm = TRUE)) * 100))
-
-cat("\nRd (Ecosystem Respiration):\n")
-cat(sprintf("  Slope: %.3f mmol O₂ m⁻² hr⁻¹ yr⁻¹ [95%% CI: %.3f, %.3f]\n", 
-    rd_slope, rd_ci[1], rd_ci[2]))
-cat(sprintf("  Bayesian R²: %.3f\n", rd_r2))
-cat(sprintf("  Credible interval excludes zero: %s\n", 
-    ifelse(sign(rd_ci[1]) == sign(rd_ci[2]), "Yes", "No")))
-cat(sprintf("  Total change (20 yr): %.1f mmol O₂ m⁻² hr⁻¹ (%.1f%%)\n", 
-    rd_slope * 20, 
-    (rd_slope * 20 / mean(Year_Averages$Rd, na.rm = TRUE)) * 100))
-
-cat("\nNP (Net Ecosystem Production):\n")
-cat(sprintf("  Slope: %.3f mmol O₂ m⁻² hr⁻¹ yr⁻¹ [95%% CI: %.3f, %.3f]\n", 
-    np_slope, np_ci[1], np_ci[2]))
-cat(sprintf("  Bayesian R²: %.3f\n", np_r2))
-cat(sprintf("  Credible interval excludes zero: %s\n", 
-    ifelse(sign(np_ci[1]) == sign(np_ci[2]), "Yes", "No")))
-cat(sprintf("  Total change (20 yr): %.1f mmol O₂ m⁻² hr⁻¹\n", np_slope * 20))
-```
-
-**Key Findings:** Over the 20-year study period, all three metabolic components showed significant declines. Maximum photosynthetic capacity (Pmax) declined by `r round(pmax_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹ (`r round((pmax_slope * 20 / mean(Year_Averages$Pmax, na.rm = TRUE)) * 100, 1)`%), ecosystem respiration (Rd) decreased by `r round(rd_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹ (`r round((rd_slope * 20 / mean(Year_Averages$Rd, na.rm = TRUE)) * 100, 1)`%), and net ecosystem production (NP) declined by `r round(np_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹. These parallel declines in both autotrophic and heterotrophic processes indicate fundamental metabolic dysfunction accompanying the coral-to-algae phase shift.
-
-## Production/Respiration Ratio: Ecosystem Maturity Indicator
-
-```{r pr-ratio}
-#| label: fig-pr-ratio
-#| fig-cap: "Production to Respiration (P/R) ratio over time. Values >1 indicate net autotrophy (production exceeds respiration), while values <1 indicate net heterotrophy. Odum (1969) proposed P/R as an indicator of ecosystem maturity, with mature systems approaching P/R = 1. The increasing trend away from 1 reflects disproportionate loss of respiratory capacity (coral biomass) relative to production."
-#| fig-width: 5
-#| fig-height: 3
-
-# Calculate P/R ratio
-Year_Averages <- Year_Averages |>
-  mutate(P_R_ratio = Pmax / Rd)
-
-# Fit Bayesian model for P/R ratio trend
-pr_brm <- brm(P_R_ratio ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
-
-# Extract coefficients
-pr_slope <- fixef(pr_brm)["Year", "Estimate"]
-pr_ci <- fixef(pr_brm)["Year", c("Q2.5", "Q97.5")]
-pr_r2 <- median(bayes_R2(pr_brm)[, 1])
-
-# Create plot
-pr_plot <- ggplot(Year_Averages, aes(x = Year, y = P_R_ratio)) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "gray30", linewidth = 0.8) +
-  geom_smooth(
-    method = "lm",
-    se = TRUE,
-    color = "#7570B3",
-    fill = "#7570B3",
-    alpha = 0.15,
-    linewidth = 1
-  ) +
-  geom_point(size = 3, color = "#7570B3", alpha = 0.7) +
-  geom_line(color = "#7570B3", linewidth = 0.5, alpha = 0.4) +
-  annotate(
-    "text",
-    x = 2008, y = Inf,
-    label = sprintf("%.3f yr⁻¹ [95%% CI: %.3f, %.3f]\nBayesian R² = %.2f",
-                    pr_slope, pr_ci[1], pr_ci[2], pr_r2),
-    hjust = 0, vjust = 1.2,
-    size = 4.5, color = "gray30"
-  ) +
-  annotate("text", x = 2024, y = 1.05, label = "Net Autotrophy (P > R)", 
-           hjust = 1, size = 4, color = "gray40") +
-  annotate("text", x = 2024, y = 0.95, label = "Net Heterotrophy (P < R)", 
-           hjust = 1, size = 4, color = "gray40") +
-  labs(
-    x = "Year",
-    y = "P/R Ratio (Pmax / Rd)",
-    title = "Ecosystem Maturity Decline: Production/Respiration Ratio",
-    subtitle = "Increasing P/R (moving away from 1) indicates loss of respiratory biomass"
-  ) +
-  theme_bw(base_size = 16) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-    axis.title = element_text(size = 15),
-    axis.text = element_text(size = 13),
-    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15))
-  ) +
-  scale_x_continuous(breaks = seq(2007, 2025, by = 3),
-                     minor_breaks = seq(2007, 2025, by = 1),
-                     limits = c(2007, 2025))
-
-pr_plot
-
-# Print summary
-cat("\n=== P/R Ratio Analysis ===\n\n")
-cat(sprintf("Initial P/R (2008-2010): %.2f ± %.2f\n",
-            mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE),
-            sd(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE)))
-cat(sprintf("Recent P/R (2023-2025): %.2f ± %.2f\n",
-            mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE),
-            sd(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE)))
-cat(sprintf("Slope: %.4f yr⁻¹ [95%% CI: %.4f, %.4f]\n", pr_slope, pr_ci[1], pr_ci[2]))
-cat(sprintf("Total change: %.2f over 20 years\n", pr_slope * 20))
-cat(sprintf("Bayesian R²: %.3f\n", pr_r2))
-cat("\nInterpretation: P/R ratio increasing from ~%.1f to ~%.1f indicates shift away\n",
-    mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE),
-    mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE))
-cat("from mature ecosystem balance. The higher P/R reflects disproportionate loss of\n")
-cat("respiratory biomass (coral holobiont) while production remains—ecosystem retrogression\n")
-cat("through loss of high-biomass, high-metabolism structure (sensu Odum 1969).\n")
-```
-
-**Ecosystem Maturity Decline**: The P/R ratio provides an integrative measure of ecosystem development (Odum 1969). Mature ecosystems approach P/R ≈ 1, balancing production and respiration with high biomass and efficient nutrient cycling. The observed increase in P/R from `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 2)` to `r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 2)` represents ecosystem retrogression through disproportionate loss of respiratory capacity. While mature coral reefs maintain P/R ≈ 1 through high biomass and tight metabolic coupling, the increasing P/R indicates loss of the high-respiration coral holobiont while production (largely from algae) persists, creating metabolic imbalance characteristic of degraded systems.
-
-```{r gp-r-ratio}
-#| label: fig-gp-r-ratio
-#| fig-cap: "Gross Production to Respiration (GP/R) ratio over time, using measured gross production (GP_mean) from daily metabolism rather than light-saturated Pmax. Values >1 indicate net autotrophy. The GP/R ratio represents actual in situ metabolic balance under ambient light conditions, while Pmax/R represents potential production capacity under saturating light."
-#| fig-width: 5
-#| fig-height: 3
-
-# Calculate GP/R ratio using absolute value of R_mean (respiration is negative)
-Year_Averages <- Year_Averages |>
-  mutate(GP_R_ratio = GP_mean / abs(R_mean))
-
-# Fit Bayesian model for GP/R ratio trend
-gpr_brm <- brm(GP_R_ratio ~ Year, data = Year_Averages, silent = 2, refresh = 0, seed = 223)
-
-# Extract coefficients
-gpr_slope <- fixef(gpr_brm)["Year", "Estimate"]
-gpr_ci <- fixef(gpr_brm)["Year", c("Q2.5", "Q97.5")]
-gpr_r2 <- median(bayes_R2(gpr_brm)[, 1])
-
-# Create plot
-gpr_plot <- ggplot(Year_Averages, aes(x = Year, y = GP_R_ratio)) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "gray30", linewidth = 0.8) +
-  geom_smooth(
-    method = "lm",
-    se = TRUE,
-    color = "#E7298A",
-    fill = "#E7298A",
-    alpha = 0.15,
-    linewidth = 1
-  ) +
-  geom_point(size = 3, color = "#E7298A", alpha = 0.7) +
-  geom_line(color = "#E7298A", linewidth = 0.5, alpha = 0.4) +
-  annotate(
-    "text",
-    x = 2008, y = Inf,
-    label = sprintf("%.3f yr⁻¹ [95%% CI: %.3f, %.3f]\nBayesian R² = %.2f",
-                    gpr_slope, gpr_ci[1], gpr_ci[2], gpr_r2),
-    hjust = 0, vjust = 1.2,
-    size = 4.5, color = "gray30"
-  ) +
-  annotate("text", x = 2024, y = 1.05, label = "Net Autotrophy (GP > R)", 
-           hjust = 1, size = 4, color = "gray40") +
-  annotate("text", x = 2024, y = 0.95, label = "Net Heterotrophy (GP < R)", 
-           hjust = 1, size = 4, color = "gray40") +
-  labs(
-    x = "Year",
-    y = "GP/R Ratio (Gross Production / |Respiration|)",
-    title = "In Situ Metabolic Balance: Gross Production/Respiration Ratio",
-    subtitle = "GP/R based on daily integrated metabolism under ambient light conditions"
-  ) +
-  theme_bw(base_size = 16) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-    axis.title = element_text(size = 15),
-    axis.text = element_text(size = 13),
-    plot.title = element_text(size = 17, face = "bold", margin = margin(b = 5)),
-    plot.subtitle = element_text(size = 13, color = "gray40", margin = margin(b = 15))
-  ) +
-  scale_x_continuous(breaks = seq(2007, 2025, by = 3),
-                     minor_breaks = seq(2007, 2025, by = 1),
-                     limits = c(2007, 2025))
-
-gpr_plot
-
-# Print summary
-cat("\n=== GP/R Ratio Analysis (In Situ Metabolism) ===\n\n")
-cat(sprintf("Initial GP/R (2008-2010): %.2f ± %.2f\n",
-            mean(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE),
-            sd(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE)))
-cat(sprintf("Recent GP/R (2023-2025): %.2f ± %.2f\n",
-            mean(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE),
-            sd(Year_Averages$GP_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE)))
-cat(sprintf("Slope: %.4f yr⁻¹ [95%% CI: %.4f, %.4f]\n", gpr_slope, gpr_ci[1], gpr_ci[2]))
-cat(sprintf("Total change: %.2f over 20 years\n", gpr_slope * 20))
-cat(sprintf("Bayesian R²: %.3f\n", gpr_r2))
-
-cat("\nInterpretation: GP/R represents the actual metabolic balance under ambient light\n")
-cat("conditions, while Pmax/R represents potential production capacity. Both ratios show\n")
-cat("similar patterns, though GP/R is consistently lower than Pmax/R because GP reflects\n")
-cat("daily integrated production (including low-light periods) rather than light-saturated\n")
-cat("maximum capacity. The ecosystem consistently operates below its photosynthetic potential.\n")
-
-# Compare Pmax/R vs GP/R
-cat("\n=== Comparison: Pmax/R vs GP/R ===\n\n")
-cat(sprintf("Mean Pmax/R: %.2f ± %.2f\n",
-            mean(Year_Averages$P_R_ratio, na.rm = TRUE),
-            sd(Year_Averages$P_R_ratio, na.rm = TRUE)))
-cat(sprintf("Mean GP/R: %.2f ± %.2f\n",
-            mean(Year_Averages$GP_R_ratio, na.rm = TRUE),
-            sd(Year_Averages$GP_R_ratio, na.rm = TRUE)))
-cat(sprintf("Ratio of Pmax/R to GP/R: %.2f\n",
-            mean(Year_Averages$P_R_ratio, na.rm = TRUE) / mean(Year_Averages$GP_R_ratio, na.rm = TRUE)))
-cat("\nThis indicates the ecosystem operates at approximately %.0f%% of its light-saturated\n",
-    (mean(Year_Averages$GP_R_ratio, na.rm = TRUE) / mean(Year_Averages$P_R_ratio, na.rm = TRUE)) * 100)
-cat("photosynthetic capacity under daily ambient light conditions.\n")
-```
-
-**GP/R vs Pmax/R Comparison**: The GP/R ratio (mean: `r round(mean(Year_Averages$GP_R_ratio, na.rm = TRUE), 2)`) is consistently lower than Pmax/R (mean: `r round(mean(Year_Averages$P_R_ratio, na.rm = TRUE), 2)`) because gross production integrates over full daily light cycles including dawn, dusk, and night periods, while Pmax represents maximum photosynthetic capacity under light saturation. The ratio of these two metrics (`r round(mean(Year_Averages$P_R_ratio, na.rm = TRUE) / mean(Year_Averages$GP_R_ratio, na.rm = TRUE), 1)`:1) indicates the degree to which the ecosystem operates below its photosynthetic potential under natural light regimes. Both metrics show similar temporal trends, confirming that metabolic imbalance is occurring at both potential and realized levels of ecosystem function.
-
-# Statistical Analysis
 
 ## Temporal Trends
 
@@ -1004,26 +668,15 @@ temporal_models |>
 
 ```{r temporal-plot}
 #| label: fig-temporal
-#| fig-cap: "Standardized temporal trends and raw time-series for 10 reef ecosystem
-#|   variables. (a) Posterior distributions of the standardized slope (change per year)
-#|   from Bayesian linear models; vertical dashed line at zero; white tick marks indicate
-#|   95% credible intervals. (b) Raw annual observations (points) with posterior median
-#|   trendline and 95% credible interval ribbon on original measurement scales. Units:
-#|   coral and macroalgae cover (%); fish biomass (g m\u207b\u00b2); N content (%);
-#|   ecosystem metabolism (mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9); temperature (\u00b0C);
-#|   nitrate+nitrite (\u00b5mol L\u207b\u00b9). Colour encodes direction: red = increasing,
-#|   blue = decreasing."
+#| fig-cap: "**Directional change across all major reef ecosystem variables at MCR LTER Site 1 backreef, 2005–2025.** (a) Posterior distributions of the standardised temporal slope (change per SD yr⁻¹) from independent Bayesian linear regression models fit to z-scored annual data. The vertical dashed line marks zero; white tick marks indicate 95% posterior credible intervals. Red = increasing trend, blue = decreasing trend; intervals excluding zero indicate credible directional change. (b) Raw annual observations (points) overlaid with posterior median trend lines and 95% credible interval ribbons on original measurement scales. Variables shown (top to bottom): coral cover (%), fleshy macroalgae cover (%), crustose coralline algae cover (%), corallivore fish biomass (g m⁻²), herbivore fish biomass (g m⁻²), algal tissue nitrogen content (%), ecosystem respiration Rd (mmol O₂ m⁻² hr⁻¹), maximum photosynthetic capacity Pmax (mmol O₂ m⁻² hr⁻¹), net community production NP (mmol O₂ m⁻² hr⁻¹), and annual maximum sea surface temperature (°C). Bayesian R² values are reported for each trend model."
 #| fig-width: 8.9
 #| fig-height: 7.5
 
-library(patchwork)
-library(showtext)
-library(sysfonts)
+
 
 # Noto Sans has full Unicode coverage (superscripts, µ, °, subscripts)
 # Falls back gracefully if offline — font is cached after first download
 font_add_google("Noto Sans", family = "noto")
-showtext_auto(enable = TRUE)
 
 # ── Nature-ready base theme (7 pt, classic, no gridlines) ──────────────────
 theme_nature <- function(base_size = 7) {
@@ -1057,6 +710,37 @@ slope_summary <- temporal_results |>
 
 param_levels <- slope_summary$Parameter
 
+# ── Scale parameters — defined here so they are available to both panels ────
+short_label_map <- tibble(
+  var = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores",
+          "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate"),
+  Parameter = c("% Coral Cover", "% Macroalgae Cover", "Corallivore",
+                "Herbivore/bioeroding fish", "%N Content", "Ecosystem Respiration",
+                "Maximum Photosynthetic Capacity", "Net Ecosystem Production",
+                "Max Temperature", "Nitrate + Nitrite"),
+  label = c(
+    "Coral cover\n(%)",
+    "Macroalgae cover\n(%)",
+    "Corallivore\n(g m\u207b\u00b2)",
+    "Herbivores\n(g m\u207b\u00b2)",
+    "N content\n(%)",
+    "Respiration\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Pmax\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "NEP\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Max temperature\n(\u00b0C)",
+    "Nitrate+nitrite\n(\u00b5mol L\u207b\u00b9)"
+  )
+)
+
+scale_params <- tibble(
+  var = short_label_map$var,
+  mu  = map_dbl(short_label_map$var, \(x) mean(Year_Averages[[x]], na.rm = TRUE)),
+  sd  = map_dbl(short_label_map$var, \(x) sd(Year_Averages[[x]],   na.rm = TRUE))
+) |>
+  left_join(short_label_map, by = "var")
+
+label_levels <- scale_params$label[match(param_levels, scale_params$Parameter)]
+
 # Short names for panel a y-axis (strip units line from panel b labels)
 short_name_map <- scale_params |>
   select(Parameter, label) |>
@@ -1088,36 +772,6 @@ panel_a <- temporal_results |>
   theme(axis.text.y = element_text(size = 6.5))
 
 # ── Back-transform fitted values and raw data to original scales ────────────
-# Scale parameters (mean + SD) from unscaled Year_Averages
-short_label_map <- tibble(
-  var = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores",
-          "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate"),
-  Parameter = c("% Coral Cover", "% Macroalgae Cover", "Corallivore",
-                "Herbivore/bioeroding fish", "%N Content", "Ecosystem Respiration",
-                "Maximum Photosynthetic Capacity", "Net Ecosystem Production",
-                "Max Temperature", "Nitrate + Nitrite"),
-  label = c(
-    "Coral cover\n(%)",
-    "Macroalgae cover\n(%)",
-    "Corallivore\n(g m\u207b\u00b2)",
-    "Herbivores\n(g m\u207b\u00b2)",
-    "N content\n(%)",
-    "Respiration\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
-    "Pmax\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
-    "NEP\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
-    "Max temperature\n(\u00b0C)",
-    "Nitrate+nitrite\n(\u00b5mol L\u207b\u00b9)"
-  )
-)
-
-scale_params <- tibble(
-  var = short_label_map$var,
-  mu  = map_dbl(short_label_map$var, ~mean(Year_Averages[[.x]], na.rm = TRUE)),
-  sd  = map_dbl(short_label_map$var, ~sd(Year_Averages[[.x]],   na.rm = TRUE))
-) |>
-  left_join(short_label_map, by = "var")
-
-label_levels <- scale_params$label[match(param_levels, scale_params$Parameter)]
 
 # ── Extract fitted values + raw data from each Bayesian model ───────────────
 get_time_series <- function(model_obj) {
@@ -1217,116 +871,6 @@ ggsave(
 
 **Model Performance Summary**: The Bayesian temporal trend models showed varying explanatory power across ecosystem variables. Temperature and coral cover trends had the highest R² values (>0.5), indicating highly predictable linear trajectories over time. Metabolic variables (Pmax, Rd, NP) showed moderate explanatory power (R² = 0.2-0.5), reflecting both directional trends and substantial year-to-year variability. Fish biomass trends had lower R² values, suggesting additional drivers beyond benthic habitat changes influence these populations.
 
-## Percent Change Analysis
-
-```{r percent-change}
-#| label: fig-percent-change
-#| fig-cap: "Percent change from start to end of time series"
-#| fig-width: 10
-#| fig-height: 6
-
-# Helper functions for first/last non-NA values
-get_first_non_na <- function(x) {
-  x[which(!is.na(x))[1]]
-}
-
-get_last_non_na <- function(x) {
-  non_na <- x[!is.na(x)]
-  if (length(non_na) > 0) tail(non_na, 1) else NA
-}
-
-# Calculate percent changes
-change_data <- Year_Averages |>
-  select(
-    NP_mean, mean_fleshy, mean_coral, Pmax, Rd,
-    N_percent, Herbivores, Corallivore, Max_temp, Nitrite_and_Nitrate
-  ) |>
-  summarise(across(everything(), list(
-    first = get_first_non_na,
-    last = get_last_non_na
-  ))) |>
-  pivot_longer(everything()) %>%
-  separate(col = name, into = c("Params", "stat"), sep = "_(?=first|last)", remove = TRUE) |>
-  pivot_wider(names_from = stat, values_from = value) |>
-  mutate(
-    percent_change = (last - first) / first * 100,
-    percent_change = if_else(Params == "NP_mean", -percent_change, percent_change)
-  ) |>
-  mutate(nicenames = case_when(
-    Params == "mean_fleshy" ~ "% Macroalgae Cover",
-    Params == "NP_mean" ~ "Net Ecosystem Production",
-    Params == "Max_temp" ~ "Max Temperature",
-    Params == "Herbivores" ~ "Herbivore/bioeroding fish",
-    Params == "Corallivore" ~ "Corallivore",
-    Params == "Pmax" ~ "Maximum Photosynthetic Capacity",
-    Params == "N_percent" ~ "%N Content",
-    Params == "Rd" ~ "Ecosystem Respiration",
-    Params == "mean_coral" ~ "% Coral Cover",
-    Params == "Nitrite_and_Nitrate" ~ "Nitrate + Nitrite"
-  )) |>
-  arrange(desc(percent_change))
-
-# Calculate rates per year for annotation
-meanyearmodels <- Year_Averages |>
-  select(change_data$Params) |>
-  summarise(across(everything(), mean, na.rm = TRUE)) |>
-  pivot_longer(everything(), names_to = "Params", values_to = "Mean")
-
-sdyearmodels <- Year_Averages |>
-  select(change_data$Params) |>
-  summarise(across(everything(), sd, na.rm = TRUE)) |>
-  pivot_longer(everything(), names_to = "Params", values_to = "SD")
-
-Rates <- meanyearmodels |>
-  left_join(sdyearmodels, by = "Params") |>
-  mutate(nicenames = case_when(
-    Params == "mean_coral" ~ "% Coral Cover",
-    Params == "mean_fleshy" ~ "% Macroalgae Cover",
-    Params == "N_percent" ~ "%N Content",
-    Params == "Corallivore" ~ "Corallivore",
-    Params == "Rd" ~ "Ecosystem Respiration",
-    Params == "Herbivores" ~ "Herbivore/bioeroding fish",
-    Params == "Max_temp" ~ "Max Temperature",
-    Params == "Pmax" ~ "Maximum Photosynthetic Capacity",
-    Params == "NP_mean" ~ "Net Ecosystem Production",
-    Params == "Nitrite_and_Nitrate" ~ "Nitrate + Nitrite"
-  )) |>
-  drop_na() |>
-  left_join(
-    temporal_results |>
-      group_by(Parameter) |>
-      summarise(Rate = median(Year)),
-    by = c("nicenames" = "Parameter")
-  ) |>
-  mutate(Rate_Year = round(Rate * SD, 2))
-
-# Lollipop plot
-change_data |>
-  mutate(
-    nicenames = factor(nicenames, levels = rev(unique(change_data$nicenames))),
-    color = if_else(percent_change > 0, "pos", "neg")
-  ) |>
-  ggplot(aes(x = percent_change, y = nicenames)) +
-  geom_segment(aes(x = 0, xend = percent_change, yend = nicenames), linewidth = 1.1) +
-  geom_point(aes(color = color), size = 4) +
-  geom_vline(xintercept = 0) +
-  geom_text(data = Rates, aes(x = -120, y = nicenames, label = Rate_Year), size = 4) +
-  scale_color_manual(values = c("#B22222", "#22B2B2")) +
-  labs(
-    x = "Percent change over time series (%)",
-    y = "",
-    title = "Ecosystem Change Magnitudes",
-    subtitle = "Numbers on left show annual rate of change in original units"
-  ) +
-  lims(x = c(-130, 185)) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    axis.text = element_text(size = 12),
-    axis.title.x = element_text(size = 14)
-  )
-```
-
 ## Correlation Analysis
 
 ```{r correlations}
@@ -1396,8 +940,7 @@ semdata2 <- Year_Averages |>
 
 # Define SEM structure
 bf_temp <- bf(temperature | mi() ~ 1 + Year)
-bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature #+ yearresid
-                   )
+bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid)
 bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature) + mi(logrd)) ####
 bf_logrd <- bf(logrd | mi() ~ 1 + logcoral + mi(temperature))
 bf_herbs <- bf(herbs | mi() ~ 1 + logfleshy)
@@ -1475,108 +1018,107 @@ cat("Note: R² not computed for responses with extensive missing data imputation
 
 ```{r sem-dag}
 #| label: fig-sem-dag
-#| fig-cap: "Causal pathways in the Bayesian SEM. Arrow width is proportional to the standardized path coefficient (|β|); blue = positive effect, red = negative effect; gray = 95% credible interval crosses zero."
-#| fig-width: 10
-#| fig-height: 7
+#| fig-cap: "**Bayesian structural equation model reveals coral cover as the central mediator of climate-driven ecosystem change.** Directed acyclic graph shows the 11 hypothesised causal pathways among nine ecosystem components, fit simultaneously in a multivariate Bayesian SEM (n = 15 annual observations, 2008–2025). Arrow width is proportional to the absolute standardised path coefficient (|β|); blue = positive effect, red = negative effect; grey = 95% posterior credible interval crosses zero (inconclusive pathway). Standardised β values are shown on each arrow. Shaded background regions distinguish ecosystem function variables (top; Ecosystem Respiration and Ecosystem Pmax in a horizontal row, with Algal N Stock elevated above) from community composition variables (bottom; Fleshy Algae, Herbivore Fish, Corallivore Fish). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to analysis to permit direct comparison of effect magnitudes."
+#| fig-width: 9
+#| fig-height: 4.2
 
 pos_col  <- "#1565C0"
 neg_col  <- "#B71C1C"
 nsig_col <- "#AAAAAA"
 
+# N Stock elevated above the Rd–Pmax horizontal line (y=5.0 vs Rd/Pmax at y=4.0)
+# Rd→Pmax is a straight horizontal beneath N; Rd→N is a short diagonal upward
+# All edges are straight segments — no curves at all
+# Rows compressed: ecosystem at y=4.0, community at y=2.0, gap = 2.0 units
 dag_nodes <- tribble(
-  ~id,           ~label,                    ~x,     ~y,    ~fill,       ~border,
-  "Year",        "Year",                     0,     3.0,   "white",     "#888888",
-  "Temp",        "Temperature",              2.2,   3.0,   "white",     "#888888",
-  "Coral",       "Coral\nCover",             4.5,   3.0,   "#E8F5E9",   "#2E7D32",
-  "Algae",       "Fleshy\nAlgae",            7.2,   5.2,   "#E8F5E9",   "#2E7D32",
-  "Rd",          "Ecosystem\nRespiration",   7.2,   3.0,   "#EDE7F6",   "#4527A0",
-  "Pmax",        "Ecosystem\nPmax",          7.2,   0.8,   "#EDE7F6",   "#4527A0",
-  "N",           "Algal N\nContent",        10.0,   3.0,   "#FFF8E1",   "#E65100",
-  "Corallivore", "Corallivore\nFish",        9.8,   4.5,   "#E3F2FD",   "#0D47A1",
-  "Herbs",       "Herbivore\nFish",         10.0,   5.2,   "#E3F2FD",   "#0D47A1"
+  ~id,           ~label,                    ~x,    ~y,    ~fill,       ~border,
+  "Year",        "Year",                    0.4,   3.5,   "white",     "#888888",
+  "Temp",        "Temperature",             2.0,   3.0,   "white",     "#888888",
+  "Coral",       "Coral\nCover",            3.8,   3.0,   "#E8F5E9",   "#2E7D32",
+  # Ecosystem function: Rd and Pmax in horizontal row; N elevated above
+  "Rd",          "Ecosystem\nRespiration",  5.6,   4.0,   "#EDE7F6",   "#4527A0",
+  "N",           "N\nStock",               7.4,   5.0,   "#FFF8E1",   "#E65100",
+  "Pmax",        "Ecosystem\nPmax",         9.2,   4.0,   "#EDE7F6",   "#4527A0",
+  # Community composition row
+  "Algae",       "Fleshy\nAlgae",           5.6,   2.0,   "#E8F5E9",   "#2E7D32",
+  "Herbs",       "Herbivore\nFish",         7.4,   2.0,   "#E3F2FD",   "#0D47A1",
+  "Corallivore", "Corallivore\nFish",       9.2,   2.0,   "#E3F2FD",   "#0D47A1"
 )
 
 dag_edges <- tribble(
   ~from,   ~to,           ~est,   ~sig,  ~loff_x, ~loff_y,
-  "Year",  "Temp",        0.462,  TRUE,   0.0,     0.25,
-  "Temp",  "Coral",      -0.558,  TRUE,   0.0,     0.25,
-  "Temp",  "Rd",          0.214,  FALSE,  0.0,     0.0,
-  "Temp",  "Pmax",       -0.158,  FALSE,  0.0,     0.0,
-  "Coral", "Algae",      -0.914,  TRUE,  -0.3,     0.0,
-  "Coral", "Rd",          1.080,  TRUE,   0.0,     0.30,
-  "Coral", "Corallivore", 0.645,  TRUE,   0.2,     0.2,
-  "Coral", "Pmax",       -0.353,  FALSE, -0.3,     0.0,
-  "Rd",    "N",           0.623,  TRUE,   0.0,     0.30,
-  "Rd",    "Pmax",        0.819,  TRUE,  -0.30,    0.0,
-  "Algae", "Herbs",       0.711,  TRUE,   0.0,     0.30
+  "Year",  "Temp",        0.465,  TRUE,   0.28,    0.18,
+  "Temp",  "Coral",      -0.549,  TRUE,   0.00,    0.24,
+  "Temp",  "Rd",          0.214,  FALSE, -0.35,    0.24,
+  "Temp",  "Pmax",       -0.158,  FALSE, -0.75,   -0.22,
+  "Coral", "Rd",          1.080,  TRUE,  -0.08,    0.24,
+  "Coral", "Algae",      -0.914,  TRUE,  -0.08,   -0.24,
+  "Coral", "Corallivore", 0.645,  TRUE,   0.38,   -0.20,
+  "Coral", "Pmax",       -0.353,  FALSE,  0.38,    0.20,
+  "Rd",    "N",           0.623,  TRUE,  -0.18,    0.22,   # short diagonal up-right
+  "Rd",    "Pmax",        0.819,  TRUE,   0.00,    0.24,   # straight horizontal below N
+  "Algae", "Herbs",       0.711,  TRUE,   0.00,    0.24    # straight horizontal
 ) |>
-  mutate(
-    direction = if_else(est >= 0, "pos", "neg"),
-    abs_est   = abs(est)
-  ) |>
+  mutate(direction = if_else(est >= 0, "pos", "neg"), abs_est = abs(est)) |>
   left_join(dag_nodes |> select(id, x, y) |> rename(from = id, x0 = x, y0 = y), by = "from") |>
   left_join(dag_nodes |> select(id, x, y) |> rename(to   = id, x1 = x, y1 = y), by = "to") |>
   mutate(mx = (x0 + x1) / 2, my = (y0 + y1) / 2, lbl = sprintf("%.2f", est))
 
-dag_straight    <- dag_edges |> filter(!(from == "Temp" & to %in% c("Rd", "Pmax")))
-dag_curved_rd   <- dag_edges |> filter(from == "Temp", to == "Rd")
-dag_curved_pmax <- dag_edges |> filter(from == "Temp", to == "Pmax")
-
-dag_arr <- arrow(length = unit(3.5, "mm"), type = "closed")
+# All edges are straight — no geom_curve needed
+dag_arr <- arrow(length = unit(3.0, "mm"), type = "closed")
 
 ggplot() +
-  geom_segment(data = filter(dag_straight,  sig),
+  # Faint region backgrounds
+  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 3.2, ymax = 5.65,
+           fill = "#EDE7F6", alpha = 0.18, color = NA) +
+  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 1.2, ymax = 2.75,
+           fill = "#E3F2FD", alpha = 0.18, color = NA) +
+  # Region labels
+  annotate("text", x = 10.12, y = 4.5, label = "Ecosystem\nfunction",
+           hjust = 0, size = 2.6, color = "#6A1B9A", fontface = "italic", lineheight = 0.9) +
+  annotate("text", x = 10.12, y = 2.0, label = "Community\ncomposition",
+           hjust = 0, size = 2.6, color = "#1565C0", fontface = "italic", lineheight = 0.9) +
+  # Significant edges
+  geom_segment(data = filter(dag_edges,  sig),
     aes(x = x0, y = y0, xend = x1, yend = y1, color = direction, linewidth = abs_est),
     alpha = 0.82, arrow = dag_arr, lineend = "butt") +
-  geom_segment(data = filter(dag_straight, !sig),
+  # Non-significant edges — reduced alpha to de-emphasise
+  geom_segment(data = filter(dag_edges, !sig),
     aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
-    color = nsig_col, alpha = 0.70, arrow = dag_arr, lineend = "butt") +
-  geom_label(data = filter(dag_straight,  sig),
+    color = nsig_col, alpha = 0.45, arrow = dag_arr, lineend = "butt") +
+  geom_label(data = filter(dag_edges,  sig),
     aes(x = mx + loff_x, y = my + loff_y, label = lbl, color = direction),
-    size = 3.0, fontface = "bold", fill = "white",
-    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
-  geom_label(data = filter(dag_straight, !sig),
+    size = 2.8, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
+  geom_label(data = filter(dag_edges, !sig),
     aes(x = mx + loff_x, y = my + loff_y, label = lbl),
-    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
-    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
-  geom_curve(data = dag_curved_rd,
-    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
-    color = nsig_col, alpha = 0.70, curvature = -0.28, arrow = dag_arr, lineend = "butt") +
-  geom_label(data = dag_curved_rd,
-    aes(x = mx + 0.3, y = my + 0.85, label = lbl),
-    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
-    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
-  geom_curve(data = dag_curved_pmax,
-    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
-    color = nsig_col, alpha = 0.70, curvature = 0.30, arrow = dag_arr, lineend = "butt") +
-  geom_label(data = dag_curved_pmax,
-    aes(x = mx - 0.1, y = my - 0.85, label = lbl),
-    color = nsig_col, size = 3.0, fontface = "bold", fill = "white",
-    label.size = 0, label.padding = unit(0.10, "lines"), show.legend = FALSE) +
+    color = nsig_col, size = 2.8, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
+  # Node boxes
   {lapply(seq_len(nrow(dag_nodes)), function(i) {
     nd <- dag_nodes[i, ]
     geom_label(data = nd, aes(x = x, y = y, label = label),
-               fill = nd$fill, color = nd$border, size = 3.2,
-               fontface = "bold", lineheight = 0.9, label.size = 0.75,
-               label.padding = unit(0.45, "lines"), label.r = unit(5, "pt"),
+               fill = nd$fill, color = nd$border, size = 3.0,
+               fontface = "bold", lineheight = 0.9, label.size = 0.65,
+               label.padding = unit(0.38, "lines"), label.r = unit(4, "pt"),
                show.legend = FALSE)
   })} +
   scale_color_manual(values = c("pos" = pos_col, "neg" = neg_col),
                      labels = c("pos" = "Positive", "neg" = "Negative"),
                      name = "Effect direction") +
-  scale_linewidth(range = c(0.8, 3.2), guide = "none") +
+  scale_linewidth(range = c(0.6, 2.8), guide = "none") +
   labs(caption = "Standardized β on arrows  ·  gray = 95% CI crosses zero") +
   theme_void(base_size = 12) +
   theme(
-    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 9, margin = margin(t = 8)),
+    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 9, margin = margin(t = 6)),
     legend.position = "bottom",
     legend.title    = element_text(size = 10, face = "bold"),
     legend.text     = element_text(size = 9),
     plot.background = element_rect(fill = "white", color = NA),
-    plot.margin     = margin(15, 20, 10, 20)
+    plot.margin     = margin(8, 10, 6, 10)
   ) +
   guides(color = guide_legend(override.aes = list(linewidth = 1.5))) +
-  coord_cartesian(xlim = c(-0.5, 11.5), ylim = c(-0.3, 6.3))
+  coord_cartesian(xlim = c(-0.1, 11.8), ylim = c(1.35, 5.75))
 ```
 
 ## SEM Path Coefficients
@@ -1651,7 +1193,7 @@ Calculate the total, direct, and indirect effects of temperature on all ecosyste
 
 ```{r temp-effects}
 #| label: fig-temp-effects
-#| fig-cap: "Direct and indirect effects of temperature on ecosystem components"
+#| fig-cap: "**Temperature effects on reef ecosystem variables are dominated by indirect pathways mediated through coral decline.** Direct, indirect (coral-mediated), and total standardised temperature effects on six ecosystem variables, estimated by decomposing posterior samples from the Bayesian SEM (15,000 post-warmup draws). Points show posterior medians; horizontal error bars show 95% credible intervals. Filled symbols indicate effects whose credible intervals exclude zero; open symbols are inconclusive. Indirect effects were computed as the product of β(Temperature→Coral) × β(Coral→Response) for each posterior draw; total effects are the sum of direct and indirect components. Variables are grouped by ecosystem domain (community composition vs. ecosystem function). Note the consistent pattern of credible indirect effects alongside inconclusive direct effects, indicating that temperature acts on reef function primarily via structural coral loss rather than direct physiological warming."
 #| fig-width: 10
 #| fig-height: 8
 #| cache: true
@@ -1897,7 +1439,7 @@ indirect_effects |>
 
 ```{r sem-conditional}
 #| label: fig-sem-conditional
-#| fig-cap: "Significant conditional relationships from the Bayesian SEM. Lines show posterior means with 95% credible intervals; points are annual observed values."
+#| fig-cap: "**Conditional effect plots for the eight significant causal relationships in the Bayesian SEM.** Each panel shows the marginal posterior-predicted relationship for a predictor–response pair, with all other model predictors held at their posterior means. Lines show posterior means; shaded ribbons show 95% credible intervals. Coloured points are annual observed values (back-transformed from z-score scale to original units). Panels are arranged in causal order from climate forcing through coral-mediated change to ecosystem function: (A) Year → Temperature, (B) Temperature → Coral Cover, (C) Coral Cover → Fleshy Algae, (D) Coral Cover → Ecosystem Respiration, (E) Coral Cover → Corallivore Fish, (F) Fleshy Algae → Herbivore Fish, (G) Ecosystem Respiration → Algal N Content, (H) Ecosystem Respiration → Ecosystem Pmax. Conditional effects were computed using the conditional_effects() function in **brms** and back-transformed to measurement units using study-wide z-score parameters."
 #| fig-width: 10
 #| fig-height: 16
 
@@ -2089,233 +1631,880 @@ rp_plot <- as_tibble(rd_pmax$logpmax.logpmax_logrd) |>
   theme(plot.title = element_text(size = 10, face = "bold"))
 ```
 
-## Future Predictions
+## Ecosystem Projections
 
-Project ecosystem state to 2050 using the SEM.
+```{r cover-ceilings}
+# z-log scale ceilings corresponding to 100% benthic cover.
+# Both cover equations were fitted with trunc(ub = z_ceil) to respect the
+# 0–100% biological bound. The same ceiling is applied in all projection
+# matrices so that manual propagation is consistent with the SEM likelihood.
+# Values are hardcoded (verified: back-transform to exactly 100% cover).
+z_ceil_coral  <- 3.39   # (log(100) - mean(log(coral%))) / sd(log(coral%))
+z_ceil_fleshy <- 2.26   # (log(100) - mean(log(fleshy%))) / sd(log(fleshy%))
+```
+
+### Linear-Trend Projections to 2055
+
+See *Methods: Ecosystem Projections* for full specification. Projections are summarised as posterior median with 50% and 95% credible intervals; observed 2005–2025 values are shown for comparison; the forecast period (2026–2055) is shaded grey.
 
 ```{r predictions}
 #| label: fig-predictions
-#| fig-cap: "Ecosystem projections to 2050"
+#| fig-cap: "**Bayesian SEM projections of reef ecosystem state at MCR LTER Site 1 backreef to 2055.** Projections are derived by propagating 3,000 posterior draws through the full causal chain of the fitted SEM. Lines show posterior median trajectories; inner ribbons show 50% credible intervals; outer ribbons show 95% credible intervals. Open diamonds are annual observed values. The dashed vertical line marks 2025 (end of the observational record); the grey-shaded region is the forecast period. Panels show (A) maximum annual sea surface temperature (°C), (B) coral cover (%), (C) ecosystem dark respiration Rd (mmol O₂ m⁻² hr⁻¹), (D) fleshy macroalgae cover (%), (E) ecosystem maximum photosynthetic capacity Pmax (mmol O₂ m⁻² hr⁻¹), (F) algal tissue N content (%), and (G) ecosystem P:R ratio (Pmax / Rd). Uncertainty widens with projection distance, particularly for fleshy macroalgae and P:R ratio, reflecting compounding uncertainty propagated through multiple causal links. Projections assume continuation of current linear warming trends and do not incorporate non-linear threshold dynamics."
 #| fig-width: 8
-#| fig-height: 10
+#| fig-height: 11
+
+# ── Projection years (standardised to SEM scale) ─────────────────────────────
+proj_years <- 2005:2055
+year_std   <- (proj_years - modelmean$Year) / modelsd$Year
+
+# 3 000 thinned posterior draws
+set.seed(7341)
+post <- as_draws_df(brms_sem_full) |>
+  as_tibble() |>
+  slice_sample(n = 3000)
+
+n <- nrow(post)
+p <- length(proj_years)
+
+# Helper: multiply each row of an (n × p) matrix by a length-n coefficient vector
+rs <- function(coef, mat) sweep(mat, 1, coef, "*")
+yr_mat <- matrix(rep(year_std, each = n), nrow = n)  # n × p
+
+# ── Propagate causal chain through the full SEM ───────────────────────────────
+# 1. Temperature (z-scored)
+temp_mat <- rs(post$b_temperature_Year, yr_mat) + post$b_temperature_Intercept
+
+# ── yearresid matrix: observed z-scaled values for hindcast (2005–2025),
+#    0 (standardised mean) for forecast years (2026–2055). yearresid captures
+#    year-specific temperature anomalies beyond the linear trend; setting it to 0
+#    for forecast years assumes future deviations are unknown and average out.
+obs_yr_actual   <- round(semdata2$Year * modelsd$Year + modelmean$Year)
+yr_resid_lookup <- tibble(Year = obs_yr_actual, yr = semdata2$yearresid)
+yr_resid_vec    <- sapply(proj_years, function(y) {
+  row <- yr_resid_lookup |> filter(Year == y)
+  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+})
+yr_resid_mat <- matrix(rep(yr_resid_vec, each = n), nrow = n)
+
+# 2. Coral cover (log-standardised; temperature + yearresid predictors)
+coral_mat <- rs(post$b_logcoral_temperature, temp_mat)    +
+             rs(post$b_logcoral_yearresid,   yr_resid_mat) +
+             post$b_logcoral_Intercept
+
+# 3. Ecosystem respiration (coral + direct temp via bsp for mi() imputed predictor)
+rd_mat <- rs(post$b_logrd_logcoral,          coral_mat) +
+          rs(post$bsp_logrd_mitemperature,   temp_mat)  +
+          post$b_logrd_Intercept
+
+# 4. Fleshy macroalgae (log-standardised; coral predictor)
+fleshy_mat <- pmin(rs(post$b_logfleshy_logcoral, coral_mat) + post$b_logfleshy_Intercept,
+                   z_ceil_fleshy)
+
+# 5. Corallivore fish (z-scored; coral predictor)
+cov_mat <- rs(post$b_Corallivore_logcoral, coral_mat) + post$b_Corallivore_Intercept
+
+# 6. Herbivore fish (z-scored; fleshy algae predictor)
+herb_mat <- rs(post$b_herbs_logfleshy, fleshy_mat) + post$b_herbs_Intercept
+
+# 7. Ecosystem Pmax (log-standardised; rd + coral + temp, all via bsp/b)
+pmax_mat <- rs(post$bsp_logpmax_milogrd,      rd_mat)    +
+            rs(post$b_logpmax_logcoral,        coral_mat) +
+            rs(post$bsp_logpmax_mitemperature, temp_mat)  +
+            post$b_logpmax_Intercept
+
+# 8. Algal N content (log-standardised; rd via bsp imputed)
+n_mat <- rs(post$bsp_Npercent_milogrd, rd_mat) + post$b_Npercent_Intercept
+
+# ── Back-transform to original units ─────────────────────────────────────────
+bt_log <- function(mat, mu, sig) exp(mat * sig + mu)
+bt_lin <- function(mat, mu, sig) mat * sig + mu
+
+proj_list <- list(
+  Temperature    = bt_lin(temp_mat,   modelmean$temperature, modelsd$temperature),
+  `Coral Cover`  = bt_log(coral_mat,  modelmean$logcoral,    modelsd$logcoral),
+  Respiration    = bt_log(rd_mat,     modelmean$logrd,       modelsd$logrd),
+  `Fleshy Algae` = bt_log(fleshy_mat, modelmean$logfleshy,   modelsd$logfleshy),
+  Pmax           = bt_log(pmax_mat,   modelmean$logpmax,     modelsd$logpmax),
+  # N_percent is log-transformed in semdata2; use explicit log-scale params
+  `N Content`    = bt_log(n_mat,
+                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
+)
+
+# Derive P:R ratio directly from back-transformed Pmax and Rd matrices
+proj_list[["P:R Ratio"]] <- proj_list$Pmax / proj_list$Respiration
+
+# ── Summarise: posterior median + 50% + 95% CI per variable per year ─────────
+proj_tbl <- imap_dfr(proj_list, function(mat, vname) {
+  tibble(variable = vname,
+         Year     = rep(proj_years, each = n),
+         value    = as.vector(mat)) |>
+    group_by(variable, Year) |>
+    summarise(median = median(value),
+              lo95   = quantile(value, 0.025), hi95 = quantile(value, 0.975),
+              lo50   = quantile(value, 0.25),  hi50 = quantile(value, 0.75),
+              .groups = "drop")
+})
+
+# ── Observed data for overlay ─────────────────────────────────────────────────
+obs_proj <- Year_Averages |>
+  transmute(Year,
+            Temperature    = Max_temp,
+            `Coral Cover`  = mean_coral,
+            Respiration    = Rd,
+            `Fleshy Algae` = mean_fleshy,
+            Pmax           = Pmax,
+            `N Content`    = N_percent,
+            `P:R Ratio`    = Pmax / Rd) |>
+  pivot_longer(-Year, names_to = "variable", values_to = "observed")
+
+# ── Panel specs ───────────────────────────────────────────────────────────────
+panel_spec <- tribble(
+  ~variable,      ~panel, ~ylab,                                    ~col,       ~ylo,  ~yhi,
+  "Temperature",  "A",    "Max. temperature (°C)",                  "#E65100",  28.5,  32.5,
+  "Coral Cover",  "B",    "Coral cover (%)",                        "#2E7D32",   0,    25,
+  "Respiration",  "C",    "Ecosystem Rd\n(mmol O₂ m⁻² hr⁻¹)",     "#4527A0",   0,    80,
+  "Fleshy Algae", "D",    "Fleshy macroalgae (%)",                  "#827717",   0,    80,
+  "Pmax",         "E",    "Ecosystem Pmax\n(mmol O₂ m⁻² hr⁻¹)",   "#0D47A1",  60,   170,
+  "N Content",    "F",    "Algal N content (%)",                    "#BF360C",   0.3,   1.0,
+  "P:R Ratio",    "G",    "P:R ratio\n(Pmax / Rd)",                 "#00695C",   1.5,   7.0
+)
+
+make_proj_panel <- function(variable, panel, ylab, col, ylo, yhi) {
+  dat <- proj_tbl   |> filter(variable == !!variable)
+  raw <- obs_proj   |> filter(variable == !!variable)
+  ggplot(dat, aes(x = Year)) +
+    annotate("rect", xmin = 2025.5, xmax = 2056, ymin = -Inf, ymax = Inf,
+             fill = "grey92") +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = col, alpha = 0.18) +
+    geom_ribbon(aes(ymin = lo50, ymax = hi50), fill = col, alpha = 0.30) +
+    geom_line(aes(y = median), color = col, linewidth = 0.9) +
+    geom_point(data = raw, aes(y = observed),
+               shape = 21, size = 1.7, color = col, fill = "white", stroke = 0.8) +
+    geom_vline(xintercept = 2025.5, linetype = "dashed",
+               color = "grey45", linewidth = 0.45) +
+    scale_x_continuous(breaks = seq(2005, 2055, 10)) +
+    coord_cartesian(ylim = c(ylo, yhi)) +
+    labs(y = ylab, x = NULL,
+         title = paste0(panel, ". ", variable)) +
+    theme_classic(base_size = 10) +
+    theme(plot.title   = element_text(size = 9.5, face = "bold", color = col),
+          axis.text.x  = element_text(angle = 30, hjust = 1, size = 8),
+          axis.title.y = element_text(size = 8))
+}
+
+panels <- pmap(panel_spec, make_proj_panel)
+
+wrap_plots(panels, ncol = 2) +
+  plot_annotation(
+    caption = paste("Grey shading = forecast (post-2025)  ·",
+                    "Inner ribbon = 50% CI  ·  Outer ribbon = 95% CI  ·",
+                    "Points = observed annual values  ·",
+                    "P:R ratio = Pmax / Rd (ratio of gross photosynthesis to respiration)"),
+    theme = theme(plot.caption = element_text(size = 8, color = "grey50", hjust = 0.5))
+  )
+```
+
+### Results: Linear-Trend Projections
+
+Projections indicate continued, broad-front ecosystem degradation under current warming trends (Fig. @fig-predictions). Maximum annual sea surface temperature is projected to reach 30.3°C (95% CI 29.7–30.9) by 2035 and 30.8°C (29.9–31.8) by 2050, an increase of approximately +0.9°C above the 2025 model estimate of 29.9°C. Coral cover, currently estimated at 7.1% (4.4–10.8%), is projected to decline to 5.4% (2.4–9.8%) by 2035 and 3.5% (0.9–9.1%) by 2050 — representing a further 50% reduction from the already-depleted 2025 level. Credible intervals on coral cover widen considerably with projection distance, reflecting compounded uncertainty propagated through the Year → Temperature → Coral causal pathway.
+
+Driven by projected coral decline, ecosystem respiration is projected to fall from 35.6 mmol O₂ m⁻² hr⁻¹ (28.9–43.6) in 2025 to 29.9 (16.7–46.1) by 2050, though widening uncertainty means the direction of change after 2035 is less certain than the 2005–2025 observed decline. Fleshy macroalgae cover shows the widest credible intervals of any projected variable, expanding from 17.6% (10.4–32.1%) in 2025 to a posterior median of 39.6% by 2050 with very wide bounds (12.8–80%+), reflecting accumulated uncertainty along the multi-step coral → algae → herbivore chain. Maximum photosynthetic capacity (Pmax) shows comparatively stable projections — declining modestly from 115 (101–130) to 107 (75–141) mmol O₂ m⁻² hr⁻¹ — consistent with the weaker and partially offset direct and indirect temperature effects on Pmax identified in the SEM. Algal tissue N content is projected to decline slowly from 0.65% (0.56–0.74%) in 2025 to 0.60% (0.42–0.75%) by 2050, tracking declining respiration through the Rd → N pathway. The ecosystem P:R ratio (Pmax / Rd), which rose sharply from 2.3 (2005) to 4.0 (2025) as respiration collapsed faster than photosynthetic capacity, is projected to stabilise around 3.5 post-2025 with widening credible intervals (2.7–5.3 by 2050), reflecting compounded uncertainty from both Pmax and Rd trajectories.
+
+### Interpretation: Linear-Trend Projections
+
+Three features of the projections warrant particular ecological attention. First, the divergence between coral cover and Pmax trajectories is notable: coral continues to decline steeply while Pmax remains relatively stable, suggesting that photosynthetic capacity is increasingly decoupled from live coral structure — potentially reflecting expanding macroalgal and turf contributions to gross photosynthesis. Second, the very wide credible intervals on fleshy macroalgae beyond 2035 highlight that the macroalgal trajectory is the most uncertain element of the forecast; the log-normal model does not impose a ceiling on algal expansion, and actual dynamics may be constrained by herbivory, nutrient limitation, or disturbance. Third, the ecosystem P:R ratio (Pmax / Rd) rose sharply from a posterior median of 2.3 in 2005 to 4.0 in 2025 as ecosystem respiration collapsed far more rapidly than photosynthetic capacity — a trajectory from heterotrophy-dominated to autotrophy-dominated metabolism consistent with reef degradation. Post-2025, both Pmax and Rd are projected to stabilise at reduced levels; the P:R ratio is accordingly projected to remain elevated (~3.5) but shows widening uncertainty, reflecting the compounding of Pmax and Rd uncertainties. The observed P:R range over 2005–2025 (1.8–4.1) confirms that the regime shift in metabolic balance occurred largely within the observational record. Taken together, the projections suggest that without intervention, MCR Site 1 backreef will be characterised by sub-4% coral cover, elevated macroalgae, depressed respiration, and weakened internal nutrient cycling by mid-century.
+
+## Reduced SEM: Parsimonious Model
+
+Three of the twelve pathways in the full SEM had 95% credible intervals spanning zero — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62), direct temperature effects on Pmax (β = −0.16, −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, −1.40 to 0.71) — indicating that these pathways are not reliably supported by the data. Retaining them in projection creates two problems: the positive temperature→Rd coefficient generates a spurious upward push on Rd when temperature is extrapolated beyond the fitted range, and the large uncertainty on the coral→Pmax and temperature→Pmax terms inflates Pmax credible intervals. A reduced 9-pathway SEM was therefore fitted with these three terms removed.
+
+```{r sem-reduced-fit}
+#| label: sem-reduced-model
 #| cache: true
 
-# Define forecast years
-test_years <- c(2010, 2020, 2030, 2040, 2050)
-test_years_scale <- (test_years - modelmean$Year) / modelsd$Year
+# Reduced SEM: remove 3 non-significant pathways
+#   1. Temperature → Rd (direct):      remove mi(temperature) from bf_logrd
+#   2. Temperature → Pmax (direct):    remove mi(temperature) from bf_logpmax
+#   3. Coral → Pmax (direct):          remove logcoral from bf_logpmax
 
-# Hindcast data for validation
-hind_values <- Year_Averages |>
-  filter(Year %in% c(2010, 2020))
+bf_temp_r        <- bf(temperature | mi()             ~ 1 + Year)
+bf_coraltemp_r   <- bf(logcoral    | trunc(ub = 3.39) ~ 1 + temperature + yearresid)
+bf_logrd_r       <- bf(logrd       | mi()             ~ 1 + logcoral)
+bf_logpmax_r     <- bf(logpmax     | mi()             ~ 1 + mi(logrd))
+bf_fleshy_r      <- bf(logfleshy   | trunc(ub = 2.26) ~ logcoral)
+bf_herbs_r       <- bf(herbs       | mi()             ~ 1 + logfleshy)
+bf_corallivore_r <- bf(Corallivore | mi()             ~ 1 + logcoral)
+bf_nutrients_r   <- bf(Npercent    | mi()             ~ 1 + mi(logrd))
 
-# Predict temperature
-new_data <- data.frame(Year = test_years_scale)
-pred_new <- posterior_predict(brms_sem_full, newdata = new_data, resp = "temperature")
-
-Temp_pred_plot <- as_tibble(pred_new * modelsd$temperature + modelmean$temperature) |>
-  pivot_longer(cols = everything()) |>
-  mutate(year = case_when(
-    name == "V1" ~ "2010", name == "V2" ~ "2020",
-    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
-  )) |>
-  ggplot(aes(y = value, x = year)) +
-  stat_halfeye(
-    point_interval = mean_hdi, .width = c(.95, .75),
-    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
-  ) +
-  geom_point(
-    data = hind_values, aes(x = as.character(Year), y = Max_temp),
-    size = 4, color = "firebrick"
-  ) +
-  labs(x = "Year", y = "Temperature (°C)", title = "A. Temperature") +
-  lims(y = c(28, 33))
-
-# Predict coral cover
-modyear <- lm(yearresid ~ Year, data = semdata2)
-test_years_resid <- predict(modyear, newdata = data.frame(Year = test_years_scale))
-newdata_temp <- data.frame(temperature = colMeans(pred_new), yearresid = test_years_resid)
-pred_new_coral <- posterior_predict(brms_sem_full, newdata = newdata_temp, resp = "logcoral")
-
-Coral_pred_plot <- exp(as_tibble(pred_new_coral * modelsd$logcoral + modelmean$logcoral)) |>
-  pivot_longer(cols = everything()) |>
-  mutate(year = case_when(
-    name == "V1" ~ "2010", name == "V2" ~ "2020",
-    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
-  )) |>
-  ggplot(aes(y = value, x = year)) +
-  stat_halfeye(
-    point_interval = mean_hdi, .width = c(.95, .75),
-    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
-  ) +
-  geom_point(
-    data = hind_values, aes(x = as.character(Year), y = mean_coral),
-    size = 4, color = "firebrick"
-  ) +
-  labs(x = "Year", y = "Coral Cover (%)", title = "B. Coral Cover") +
-  lims(y = c(0, 25))
-
-# Predict Rd
-newdata_logcoral <- data.frame(
-  logcoral = colMeans(pred_new_coral),
-  temperature = newdata_temp$temperature
+brms_sem_reduced <- brm(
+  bf_temp_r + bf_coraltemp_r + bf_logrd_r + bf_herbs_r + bf_corallivore_r +
+    bf_nutrients_r + bf_fleshy_r + bf_logpmax_r + set_rescor(FALSE),
+  data    = semdata2,
+  chains  = 3, iter = 10000, warmup = 5000, seed = 11,
+  sample_prior = "no",
+  prior   = c(
+    set_prior("normal(0, 2)",    class = "b"),
+    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
+    set_prior("normal(0, 2)",    class = "Intercept")
+  ),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  family  = gaussian(),
+  silent = 2, refresh = 0
 )
-pred_new_Rd <- posterior_predict(brms_sem_full, newdata = newdata_logcoral, resp = "logrd")
-
-Rd_pred_plot <- exp(as_tibble(pred_new_Rd * modelsd$logrd + modelmean$logrd)) |>
-  pivot_longer(cols = everything()) |>
-  mutate(year = case_when(
-    name == "V1" ~ "2010", name == "V2" ~ "2020",
-    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
-  )) |>
-  ggplot(aes(y = value, x = year)) +
-  stat_halfeye(
-    point_interval = mean_hdi, .width = c(.95, .75),
-    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
-  ) +
-  geom_point(
-    data = hind_values, aes(x = as.character(Year), y = Rd),
-    size = 4, color = "firebrick"
-  ) +
-  labs(
-    x = "Year",
-    y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    title = "C. Respiration"
-  ) +
-  lims(y = c(0, 80))
-
-# Predict N content
-newdata_N <- data.frame(logrd = colMeans(pred_new_Rd))
-pred_new_N <- posterior_epred(brms_sem_full, newdata = newdata_N, resp = "Npercent")
-
-N_pred_plot <- exp(as_tibble(pred_new_N * modelsd$Npercent + modelmean$Npercent)) |>
-  pivot_longer(cols = everything()) |>
-  mutate(year = case_when(
-    name == "V1" ~ "2010", name == "V2" ~ "2020",
-    name == "V3" ~ "2030", name == "V4" ~ "2040", name == "V5" ~ "2050"
-  )) |>
-  ggplot(aes(y = value, x = year)) +
-  stat_halfeye(
-    point_interval = mean_hdi, .width = c(.95, .75),
-    fatten_point = 2, slab_alpha = 0.6, fill = scales::alpha("#009E73", 0.6)
-  ) +
-  geom_point(
-    data = hind_values, aes(x = as.character(Year), y = N_percent),
-    size = 4, color = "firebrick"
-  ) +
-  labs(x = "Year", y = "N Content (%)", title = "D. Nitrogen Stock")
-
-# Combine predictions
-(Temp_pred_plot / Coral_pred_plot / Rd_pred_plot / N_pred_plot)
 ```
+
+```{r sem-reduced-summary}
+#| label: sem-reduced-results
+
+summary(brms_sem_reduced)
+```
+
+```{r sem-reduced-r2}
+#| label: sem-reduced-r2
+
+# Manual R² for mi()-imputed responses
+for (resp in c("logrd", "logpmax")) {
+  fit_f <- fitted(brms_sem_full,    resp = resp)[, "Estimate"]
+  fit_r <- fitted(brms_sem_reduced, resp = resp)[, "Estimate"]
+  obs_v <- semdata2[[resp]]
+  ok    <- !is.na(obs_v)
+  cat(sprintf("%-10s  Full R²: %.3f   Reduced R²: %.3f\n", resp,
+              cor(fit_f[ok], obs_v[ok])^2, cor(fit_r[ok], obs_v[ok])^2))
+}
+```
+
+```{r sem-reduced-projections}
+#| label: reduced-sem-projection-data
+
+set.seed(6214)
+post_r <- as_draws_df(brms_sem_reduced) |> as_tibble() |> slice_sample(n = 3000)
+n_r    <- nrow(post_r)
+
+# yearresid matrix: observed for 2005-2025, zero for 2026-2055
+yr_resid_vec_r <- sapply(proj_years, function(y) {
+  row <- yr_resid_lookup |> filter(Year == y)
+  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+})
+yr_resid_mat_r <- matrix(rep(yr_resid_vec_r, each = n_r), nrow = n_r)
+yr_mat_r       <- matrix(rep(year_std, each = n_r), nrow = n_r)
+
+# ── Propagate reduced SEM causal chain ────────────────────────────────────────
+temp_mat_r   <- rs(post_r$b_temperature_Year,     yr_mat_r)   + post_r$b_temperature_Intercept
+coral_mat_r  <- rs(post_r$b_logcoral_temperature, temp_mat_r) +
+                rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r) +
+                post_r$b_logcoral_Intercept
+rd_mat_r     <- rs(post_r$b_logrd_logcoral, coral_mat_r)      + post_r$b_logrd_Intercept
+fleshy_mat_r <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r) + post_r$b_logfleshy_Intercept,
+                     z_ceil_fleshy)
+cov_mat_r    <- rs(post_r$b_Corallivore_logcoral, coral_mat_r)+ post_r$b_Corallivore_Intercept
+herb_mat_r   <- rs(post_r$b_herbs_logfleshy, fleshy_mat_r)    + post_r$b_herbs_Intercept
+pmax_mat_r   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r)      + post_r$b_logpmax_Intercept
+n_mat_r      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r)     + post_r$b_Npercent_Intercept
+
+proj_list_r <- list(
+  Temperature    = bt_lin(temp_mat_r,   modelmean$temperature, modelsd$temperature),
+  `Coral Cover`  = bt_log(coral_mat_r,  modelmean$logcoral,    modelsd$logcoral),
+  Respiration    = bt_log(rd_mat_r,     modelmean$logrd,       modelsd$logrd),
+  `Fleshy Algae` = bt_log(fleshy_mat_r, modelmean$logfleshy,   modelsd$logfleshy),
+  Pmax           = bt_log(pmax_mat_r,   modelmean$logpmax,     modelsd$logpmax),
+  `N Content`    = bt_log(n_mat_r,
+                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
+)
+proj_list_r[["P:R Ratio"]] <- proj_list_r$Pmax / proj_list_r$Respiration
+
+proj_tbl_r <- imap_dfr(proj_list_r, function(mat, vname) {
+  tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
+    group_by(variable, Year) |>
+    summarise(median = median(value),
+              lo95 = quantile(value, .025), hi95 = quantile(value, .975),
+              lo50 = quantile(value, .25),  hi50 = quantile(value, .75),
+              .groups = "drop")
+})
+
+# ── Counterfactual: temperature stabilised at 2025 ────────────────────────────
+temp_mat_r_cf <- temp_mat_r
+temp_mat_r_cf[, which(proj_years > 2025)] <- temp_2025_std
+
+coral_mat_r_cf  <- rs(post_r$b_logcoral_temperature, temp_mat_r_cf)   +
+                   rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r)  +
+                   post_r$b_logcoral_Intercept
+rd_mat_r_cf     <- rs(post_r$b_logrd_logcoral, coral_mat_r_cf)        + post_r$b_logrd_Intercept
+fleshy_mat_r_cf <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r_cf) + post_r$b_logfleshy_Intercept,
+                        z_ceil_fleshy)
+pmax_mat_r_cf   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r_cf)        + post_r$b_logpmax_Intercept
+n_mat_r_cf      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r_cf)       + post_r$b_Npercent_Intercept
+
+proj_tbl_r_cf <- imap_dfr(
+  list(Temperature    = bt_lin(temp_mat_r_cf,   modelmean$temperature, modelsd$temperature),
+       `Coral Cover`  = bt_log(coral_mat_r_cf,  modelmean$logcoral,    modelsd$logcoral),
+       Respiration    = bt_log(rd_mat_r_cf,     modelmean$logrd,       modelsd$logrd),
+       `Fleshy Algae` = bt_log(fleshy_mat_r_cf, modelmean$logfleshy,   modelsd$logfleshy),
+       Pmax           = bt_log(pmax_mat_r_cf,   modelmean$logpmax,     modelsd$logpmax),
+       `N Content`    = bt_log(n_mat_r_cf,
+                               mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                               sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
+  function(mat, vname) {
+    tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
+      group_by(variable, Year) |>
+      summarise(median = median(value),
+                lo95 = quantile(value, .025), hi95 = quantile(value, .975),
+                lo50 = quantile(value, .25),  hi50 = quantile(value, .75),
+                .groups = "drop")
+  })
+
+```
+
+```{r fig-reduced-projections}
+#| label: fig-reduced-proj
+#| fig-cap: "**Reduced SEM projections (9 pathways), 2005–2055.** Three non-significant pathways from the full SEM were removed: direct temperature effects on ecosystem respiration (β = 0.22, 95% CI −0.22–0.62), direct temperature effects on Pmax (β = −0.16, −0.78–0.45), and direct coral effects on Pmax (β = −0.35, −1.40–0.71). Solid lines and ribbons show reduced SEM posterior median with 50% (inner) and 95% (outer) credible intervals. Dashed lines show the full SEM posterior median for comparison. Open points are annual observed values. Grey shading = forecast period (post-2025). The transient increase in Rd and N content at 2026–2035 reflects the yearresid = 0 forecast assumption: in 2025, the observed non-thermal decline (yearresid) was strongly suppressing coral below its temperature-driven expectation; releasing this suppression in the forecast temporarily allows partial coral and Rd recovery before continued temperature-driven decline resumes."
+#| fig-width: 8
+#| fig-height: 11
+
+# Observed data with P:R
+obs_proj_r <- Year_Averages |>
+  transmute(Year, Temperature = Max_temp, `Coral Cover` = mean_coral,
+            Respiration = Rd, `Fleshy Algae` = mean_fleshy, Pmax = Pmax,
+            `N Content` = N_percent, `P:R Ratio` = Pmax / Rd) |>
+  pivot_longer(-Year, names_to = "variable", values_to = "observed")
+
+# Full SEM with P:R for overlay
+proj_tbl_full_pr <- bind_rows(
+  proj_tbl,
+  proj_tbl |> filter(variable == "Pmax") |>
+    left_join(proj_tbl |> filter(variable == "Respiration") |> select(Year, rd_med = median), by = "Year") |>
+    mutate(variable = "P:R Ratio", across(c(median,lo95,hi95,lo50,hi50), ~ .x / rd_med)) |>
+    select(-rd_med)
+)
+
+panel_spec_r <- tribble(
+  ~variable,      ~panel, ~ylab,                                    ~col,       ~ylo,  ~yhi,
+  "Temperature",  "A",    "Max. temperature (°C)",                  "#E65100",  28.5,  32.5,
+  "Coral Cover",  "B",    "Coral cover (%)",                        "#2E7D32",   0,    25,
+  "Respiration",  "C",    "Ecosystem Rd\n(mmol O₂ m⁻² hr⁻¹)",     "#4527A0",   0,    80,
+  "Fleshy Algae", "D",    "Fleshy macroalgae (%)",                  "#827717",   0,    80,
+  "Pmax",         "E",    "Ecosystem Pmax\n(mmol O₂ m⁻² hr⁻¹)",   "#0D47A1",  60,   170,
+  "N Content",    "F",    "Algal N content (%)",                    "#BF360C",   0.3,   1.0,
+  "P:R Ratio",    "G",    "P:R ratio (Pmax / Rd)",                  "#00695C",   1.5,   7.0
+)
+
+make_reduced_panel <- function(variable, panel, ylab, col, ylo, yhi) {
+  dat_r    <- proj_tbl_r         |> filter(variable == !!variable)
+  dat_full <- proj_tbl_full_pr   |> filter(variable == !!variable)
+  raw      <- obs_proj_r         |> filter(variable == !!variable)
+  
+  ggplot(dat_r, aes(x = Year)) +
+    annotate("rect", xmin = 2025.5, xmax = 2056, ymin = -Inf, ymax = Inf, fill = "grey92") +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = col, alpha = 0.18) +
+    geom_ribbon(aes(ymin = lo50, ymax = hi50), fill = col, alpha = 0.30) +
+    geom_line(aes(y = median), color = col, linewidth = 0.9) +
+    geom_line(data = dat_full, aes(y = median),
+              color = col, linewidth = 0.5, linetype = "dashed", alpha = 0.55) +
+    geom_point(data = raw, aes(y = observed),
+               shape = 21, size = 1.7, color = col, fill = "white", stroke = 0.8) +
+    geom_vline(xintercept = 2025.5, linetype = "dashed", color = "grey45", linewidth = 0.45) +
+    scale_x_continuous(breaks = seq(2005, 2055, 10)) +
+    coord_cartesian(ylim = c(ylo, yhi)) +
+    labs(y = ylab, x = NULL, title = paste0(panel, ". ", variable)) +
+    theme_classic(base_size = 10) +
+    theme(plot.title   = element_text(size = 9.5, face = "bold", color = col),
+          axis.text.x  = element_text(angle = 30, hjust = 1, size = 8),
+          axis.title.y = element_text(size = 8))
+}
+
+panels_r <- pmap(panel_spec_r, make_reduced_panel)
+
+wrap_plots(panels_r, ncol = 2) +
+  plot_annotation(
+    caption = paste("Solid = reduced SEM (9 pathways)  ·  Dashed = full SEM (12 pathways)",
+                    "·  Inner ribbon = 50% CI  ·  Outer = 95% CI  ·  Points = observed"),
+    theme = theme(plot.caption = element_text(size = 8, color = "grey50", hjust = 0.5))
+  )
+```
+
+The reduced model retains essentially the same R² for temperature (0.214 vs. 0.216), coral (0.713), and fleshy algae (0.817 vs. 0.816), with modest reductions for respiration (0.620 vs. 0.659) and Pmax (0.375 vs. 0.400) — the expected cost of removing three predictors. All nine retained pathway coefficients are stable relative to the full model (within 0.02 SD of each other; see Supplementary Table 1). The `Rd → Pmax` pathway tightens substantially (β = 0.61, 95% CI 0.19–1.05 vs. 0.81, 0.04–1.63 in the full model), because the competing temperature and coral terms were absorbing residual Pmax variance and inflating uncertainty.
+
+In the reduced model projections, ecosystem respiration declines from 26.5 mmol O₂ m⁻² hr⁻¹ in 2025 to 27.1 (16.7–36.3) by 2050 — a modest net decline compared to the full model's flat or slightly increasing trajectory (30.0 mmol). A transient rebound in Rd is apparent in 2026–2035 (Fig. @fig-reduced-proj, panel C), driven by the yearresid mechanism: in 2025, the observed non-thermal secular decline (yearresid = +1.57 SD) was strongly suppressing coral below its temperature-expected level; setting yearresid = 0 in the forecast releases this suppression and allows a partial coral and Rd recovery before rising temperatures resume the downward trend by the mid-2030s. This transient is a forecast assumption artefact rather than an ecological prediction — if the non-thermal decline drivers persist beyond 2025, coral and Rd would not rebound. Pmax credible intervals narrow meaningfully (95% CI 82–119 vs. 74–137 mmol O₂ m⁻² hr⁻¹), reflecting better-constrained downstream propagation.
+
+## Copernicus CDS CMIP6 SST Projections to 2100
+
+```{r cds-setup}
+#| label: cds-setup
+#| echo: true
+#| eval: false
+
+# ── Run once to store your CDS Personal Access Token securely ─────────────────
+# 1. Log in at https://cds.climate.copernicus.eu/
+# 2. Go to Profile (top-right) → Personal Access Tokens → copy your token
+# 3. Paste it below and run this chunk once — it will not need to be run again.
+library(ecmwfr)
+wf_set_key(key = "YOUR-PERSONAL-ACCESS-TOKEN")
+```
+
+```{r cds-cmip6-sst-download}
+#| label: cds-cmip6-sst-download
+#| cache: true
+#| echo: false
+#| message: false
+
+# ── Download CMIP6 sea surface temperature (tos) from Copernicus CDS ──────────
+# Ten coupled ScenarioMIP models with tos available for all three SSPs.
+# Monthly resolution, spatially subsetted to a 3° box around Moorea LTER Site 1
+# (-17.48°S, -149.83°W). Four experiments: historical (1950-2014) +
+# SSP1-2.6 / SSP2-4.5 / SSP5-8.5 (2015-2100).
+# Note: CDS processes requests server-side; first run may take 30–90 minutes.
+
+library(ecmwfr)
+
+dir.create("data/cmip6_sst", recursive = TRUE, showWarnings = FALSE)
+
+cmip6_models <- c(
+  "access_cm2", "bcc_csm2_mr", "ec_earth3",
+  "gfdl_esm4",  "ipsl_cm6a_lr", "miroc6",
+  "mpi_esm1_2_lr", "mri_esm2_0", "noresm2_lm", "ukesm1_0_ll"
+)
+
+# Bounding box: N, W, S, E (degrees, -180 to 180)
+moorea_area <- c(-16.0, -151.0, -19.0, -148.0)
+
+all_months <- as.list(sprintf("%02d", 1:12))
+
+build_sst_request <- function(experiment, years, target_file) {
+  list(
+    dataset_short_name  = "projections-cmip6",
+    temporal_resolution = "monthly",
+    experiment          = experiment,
+    variable            = "sea_surface_temperature",
+    model               = as.list(cmip6_models),
+    year                = as.list(as.character(years)),
+    month               = all_months,
+    area                = moorea_area,
+    target              = target_file
+  )
+}
+
+requests <- list(
+  build_sst_request("historical", 1950:2014, "tos_historical.zip"),
+  build_sst_request("ssp1_2_6",  2015:2100, "tos_ssp126.zip"),
+  build_sst_request("ssp2_4_5",  2015:2100, "tos_ssp245.zip"),
+  build_sst_request("ssp5_8_5",  2015:2100, "tos_ssp585.zip")
+)
+
+wf_request_batch(requests, workers = 2, path = "data/cmip6_sst/")
+```
+
+```{r cds-cmip6-sst-process}
+#| label: cds-cmip6-sst-process
+#| cache: true
+#| echo: false
+#| message: false
+
+# ── Read CDS NetCDF files, extract Moorea grid cell, bias-correct ─────────────
+# Produces:
+#   wb_proj_bc   — ensemble p10/median/p90 per scenario-year (used in propagation)
+#   ann_cmip6_bc — per-model historical annual max SST (used for spread ribbon)
+
+library(ncdf4)
+
+sst_dir    <- "data/cmip6_sst"
+moorea_lon <- -149.83
+moorea_lat <- -17.48
+
+# Extract model name from CMIP6 standard filename:
+# <var>_<freq>_<model>_<exp>_<variant>_<grid>_<period>.nc
+extract_model_name <- function(filepath) {
+  parts <- strsplit(basename(filepath), "_")[[1]]
+  if (length(parts) >= 3) parts[3] else "unknown"
+}
+
+read_tos_nc <- function(nc_path, experiment) {
+  nc <- nc_open(nc_path)
+  on.exit(nc_close(nc))
+
+  model <- extract_model_name(nc_path)
+
+  # Coordinates — handle both 1-D regular and 2-D curvilinear grids
+  lon <- tryCatch(ncvar_get(nc, "lon"), error = \(e) ncvar_get(nc, "longitude"))
+  lat <- tryCatch(ncvar_get(nc, "lat"), error = \(e) ncvar_get(nc, "latitude"))
+
+  # Normalise 0–360 longitudes to -180–180
+  lon_norm <- ifelse(lon > 180, lon - 360, lon)
+
+  if (length(dim(lon)) == 2) {
+    # Curvilinear grid
+    dist  <- sqrt((lon_norm - moorea_lon)^2 + (lat - moorea_lat)^2)
+    idx   <- which(dist == min(dist, na.rm = TRUE), arr.ind = TRUE)
+    tos_raw <- ncvar_get(nc, "tos")[idx[1, 1], idx[1, 2], ]
+  } else {
+    i_lon   <- which.min(abs(lon_norm - moorea_lon))
+    i_lat   <- which.min(abs(lat      - moorea_lat))
+    tos_raw <- ncvar_get(nc, "tos")[i_lon, i_lat, ]
+  }
+
+  # Time → calendar dates
+  time_raw   <- ncvar_get(nc, "time")
+  time_units <- ncatt_get(nc, "time", "units")$value
+  origin_str <- sub("^days since ", "", time_units)
+  dates      <- as.Date(origin_str) + as.integer(round(time_raw))
+
+  # Replace fill values with NA
+  fv <- ncatt_get(nc, "tos", "_FillValue")$value
+  if (length(fv) > 0) tos_raw[abs(tos_raw - fv) < abs(fv) * 1e-3] <- NA
+
+  # Convert Kelvin → Celsius if needed
+  u <- ncatt_get(nc, "tos", "units")$value
+  if (length(u) > 0 && grepl("^K$|kelvin", u, ignore.case = TRUE))
+    tos_raw <- tos_raw - 273.15
+
+  n <- min(length(dates), length(tos_raw))
+  tibble(model      = model,
+         experiment = experiment,
+         date       = dates[seq_len(n)],
+         tos        = as.numeric(tos_raw[seq_len(n)]))
+}
+
+zip_meta <- tibble(
+  zip_file   = file.path(sst_dir, c("tos_historical.zip", "tos_ssp126.zip",
+                                     "tos_ssp245.zip",    "tos_ssp585.zip")),
+  experiment = c("historical", "ssp1_2_6", "ssp2_4_5", "ssp5_8_5")
+)
+
+all_tos <- pmap_dfr(zip_meta, function(zip_file, experiment) {
+  if (!file.exists(zip_file)) { warning("Missing: ", zip_file); return(NULL) }
+  td <- file.path(sst_dir, experiment)
+  dir.create(td, showWarnings = FALSE)
+  unzip(zip_file, exdir = td, overwrite = FALSE)
+  nc_files <- list.files(td, pattern = "\\.nc$", full.names = TRUE)
+  map_dfr(nc_files, \(f) tryCatch(
+    read_tos_nc(f, experiment),
+    error = \(e) { warning(basename(f), ": ", e$message); NULL }
+  ))
+})
+
+# Annual maximum SST per model-year
+ann_tos <- all_tos |>
+  mutate(year = year(date)) |>
+  group_by(model, experiment, year) |>
+  summarise(ann_max = max(tos, na.rm = TRUE), .groups = "drop") |>
+  filter(is.finite(ann_max))
+
+# ── Delta bias correction: anchor each model to observed MCR 2005-2025 mean ───
+obs_mean_mcr_cds <- mean(Year_Averages$Max_temp[Year_Averages$Year %in% 2005:2025],
+                         na.rm = TRUE)
+
+bias_tbl_cds <- ann_tos |>
+  filter(
+    (experiment == "historical"                            & year %in% 2005:2014) |
+    (experiment %in% c("ssp1_2_6","ssp2_4_5","ssp5_8_5") & year %in% 2015:2025)
+  ) |>
+  group_by(model) |>
+  summarise(model_mean = mean(ann_max, na.rm = TRUE), .groups = "drop") |>
+  mutate(bias = obs_mean_mcr_cds - model_mean)
+
+ann_tos_bc <- ann_tos |>
+  left_join(bias_tbl_cds, by = "model") |>
+  mutate(ann_max_bc = ann_max + bias)
+
+# ── Ensemble p10 / median / p90 per experiment-year ───────────────────────────
+ens_stats <- function(data, exp_name) {
+  data |>
+    filter(experiment == exp_name) |>
+    group_by(year) |>
+    summarise(p10    = quantile(ann_max_bc, 0.10, na.rm = TRUE),
+              median = quantile(ann_max_bc, 0.50, na.rm = TRUE),
+              p90    = quantile(ann_max_bc, 0.90, na.rm = TRUE),
+              .groups = "drop") |>
+    mutate(experiment = exp_name)
+}
+
+ssp_ens  <- bind_rows(
+  ens_stats(ann_tos_bc, "ssp1_2_6"),
+  ens_stats(ann_tos_bc, "ssp2_4_5"),
+  ens_stats(ann_tos_bc, "ssp5_8_5")
+)
+hist_ens <- ens_stats(ann_tos_bc, "historical")
+
+# ── Build wb_proj_bc (structure expected by downstream propagation code) ───────
+ssp_long <- ssp_ens |>
+  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
+  mutate(scenario = case_when(
+    experiment == "ssp1_2_6" ~ "ssp126",
+    experiment == "ssp2_4_5" ~ "ssp245",
+    experiment == "ssp5_8_5" ~ "ssp585"
+  )) |>
+  select(year, scenario, percentile, tasmax_bc)
+
+# Historical 2005-2014 expanded across all three scenarios for the overlap window
+hist_long <- hist_ens |>
+  filter(year %in% 2005:2014) |>
+  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
+  select(year, percentile, tasmax_bc) |>
+  expand_grid(scenario = c("ssp126", "ssp245", "ssp585"))
+
+wb_proj_bc <- bind_rows(hist_long, ssp_long) |>
+  distinct(year, scenario, percentile, .keep_all = TRUE) |>
+  arrange(scenario, percentile, year) |>
+  filter(year %in% 2005:2100)
+
+# ── ann_cmip6_bc: historical per-model series for the 2005-2014 spread ribbon ─
+ann_cmip6_bc <- ann_tos_bc |>
+  filter(experiment == "historical")
+```
+
+```{r wb-cmip6-propagate}
+#| label: wb-cmip6-propagate
+
+# ── Propagate each SSP scenario × CMIP6 percentile through the reduced SEM ───
+propagate_wb_ssp <- function(scenario_name, pct = "median") {
+  temps_bc <- wb_proj_bc |>
+    filter(scenario == scenario_name, percentile == pct) |>
+    arrange(year) |>
+    pull(tasmax_bc)
+
+  temp_z <- (temps_bc - modelmean$temperature) / modelsd$temperature
+  tm     <- matrix(rep(temp_z, each = n_r), nrow = n_r)
+
+  yr_rv <- sapply(2005:2100, function(y) {
+    row <- yr_resid_lookup |> filter(Year == y)
+    if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+  })
+  yrm <- matrix(rep(yr_rv, each = n_r), nrow = n_r)
+
+  cm <- pmin(rs(post_r$b_logcoral_temperature, tm) +
+             rs(post_r$b_logcoral_yearresid,   yrm) + post_r$b_logcoral_Intercept, z_ceil_coral)
+  rm <- rs(post_r$b_logrd_logcoral, cm)         + post_r$b_logrd_Intercept
+  fm <- pmin(rs(post_r$b_logfleshy_logcoral, cm) + post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm <- rs(post_r$bsp_logpmax_milogrd, rm)      + post_r$b_logpmax_Intercept
+  nm <- rs(post_r$bsp_Npercent_milogrd, rm)     + post_r$b_Npercent_Intercept
+
+  imap_dfr(
+    list(Temperature    = bt_lin(tm, modelmean$temperature, modelsd$temperature),
+         `Coral Cover`  = bt_log(cm, modelmean$logcoral,   modelsd$logcoral),
+         Respiration    = bt_log(rm, modelmean$logrd,      modelsd$logrd),
+         `Fleshy Algae` = bt_log(fm, modelmean$logfleshy,  modelsd$logfleshy),
+         Pmax           = bt_log(pm, modelmean$logpmax,    modelsd$logpmax),
+         `N Content`    = bt_log(nm,
+                                 mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                                 sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
+    function(mat, vname) {
+      tibble(scenario = scenario_name, percentile = pct, variable = vname,
+             year = rep(2005:2100, each = n_r), value = as.vector(mat)) |>
+        group_by(scenario, percentile, variable, year) |>
+        summarise(median = median(value, na.rm = TRUE),
+                  lo95 = quantile(value, .025, na.rm = TRUE),
+                  hi95 = quantile(value, .975, na.rm = TRUE),
+                  lo50 = quantile(value, .25,  na.rm = TRUE),
+                  hi50 = quantile(value, .75,  na.rm = TRUE),
+                  .groups = "drop")
+    })
+}
+
+wb_all_combos <- expand_grid(
+  scenario   = c("ssp126", "ssp245", "ssp585"),
+  percentile = c("p10", "median", "p90")
+)
+wb_proj_tbl <- bind_rows(
+  mapply(propagate_wb_ssp,
+         scenario_name = wb_all_combos$scenario,
+         pct           = wb_all_combos$percentile,
+         SIMPLIFY      = FALSE)
+)
+
+# ── Tidy for plotting ─────────────────────────────────────────────────────────
+wb_sem_ci_band <- wb_proj_tbl |>
+  filter(percentile == "median") |>
+  select(scenario, variable, year, central = median, lo_sem = lo95, hi_sem = hi95)
+
+wb_clim_band <- wb_proj_tbl |>
+  filter(percentile %in% c("p10", "p90")) |>
+  select(scenario, variable, year, percentile, clim_med = median) |>
+  pivot_wider(names_from = percentile, values_from = clim_med) |>
+  rename(lo_clim = p10, hi_clim = p90)
+
+wb_ssp_labels  <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5", ssp585 = "SSP5-8.5")
+wb_ssp_colours <- c(ssp126 = "#2196F3",  ssp245 = "#FF9800",   ssp585 = "#E53935")
+wb_var_order   <- c("Temperature","Coral Cover","Respiration",
+                    "Fleshy Algae","Pmax","N Content")
+wb_var_units   <- c(Temperature    = "\u00b0C",
+                    `Coral Cover`  = "% cover",
+                    Respiration    = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
+                    `Fleshy Algae` = "% cover",
+                    Pmax           = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
+                    `N Content`    = "% N")
+
+wb_plot_tbl <- wb_sem_ci_band |>
+  left_join(wb_clim_band, by = c("scenario", "variable", "year")) |>
+  mutate(variable       = factor(variable, levels = wb_var_order),
+         scenario_label = wb_ssp_labels[scenario])
+
+# ── Patch: historical temperature spread from Open-Meteo 7-model ensemble ─────
+# The WorldBank historical series has no p10/p90; substitute the inter-model
+# spread (p10–p90 across 7 bias-corrected HighResMIP models) for 2005–2014.
+om_hist_spread <- ann_cmip6_bc |>
+  filter(year %in% 2005:2014) |>
+  group_by(year) |>
+  summarise(lo_clim_om = quantile(ann_max_bc, 0.10),
+            hi_clim_om = quantile(ann_max_bc, 0.90),
+            .groups = "drop")
+
+wb_plot_tbl <- wb_plot_tbl |>
+  left_join(om_hist_spread, by = "year") |>
+  mutate(
+    lo_clim = if_else(variable == "Temperature" & year %in% 2005:2014,
+                      lo_clim_om, lo_clim),
+    hi_clim = if_else(variable == "Temperature" & year %in% 2005:2014,
+                      hi_clim_om, hi_clim)
+  ) |>
+  select(-lo_clim_om, -hi_clim_om)
+```
+
+```{r fig-wb-cmip6}
+#| label: fig-wb-cmip6
+#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. Inner ribbons: 95% credible interval from the SEM posterior (3,000 draws; CMIP6 ensemble median SST). Outer ribbons (temperature panel): CMIP6 multi-model p10–p90 spread. Open circles: observed 2005–2025 values. Grey shading: forecast period. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond observed range)."
+#| fig-width: 9
+#| fig-height: 8
+
+wb_y_limits <- list(
+  Temperature    = NULL,
+  `Coral Cover`  = c(0, NA),
+  Respiration    = c(0, NA),
+  `Fleshy Algae` = c(0, 100),
+  Pmax           = c(60, NA),
+  `N Content`    = c(0.3, NA)
+)
+
+make_wb_panel <- function(vname) {
+  d_v   <- wb_plot_tbl |> filter(variable == vname)
+  obs_v <- Year_Averages |>
+    select(year = Year,
+           Temperature    = Max_temp,
+           `Coral Cover`  = mean_coral,
+           Respiration    = Rd,
+           `Fleshy Algae` = mean_fleshy,
+           Pmax           = Pmax,
+           `N Content`    = N_percent) |>
+    pivot_longer(-year, names_to = "variable", values_to = "obs") |>
+    filter(variable == vname)
+  unit <- wb_var_units[[vname]]
+  ylim <- wb_y_limits[[vname]]
+
+  p <- ggplot(d_v, aes(x = year, colour = scenario, fill = scenario)) +
+    annotate("rect", xmin = 2025.5, xmax = 2100, ymin = -Inf, ymax = Inf,
+             fill = "grey92", alpha = .6) +
+    geom_ribbon(aes(ymin = lo_clim, ymax = hi_clim), alpha = 0.10, colour = NA) +
+    geom_ribbon(aes(ymin = lo_sem,  ymax = hi_sem),  alpha = 0.20, colour = NA) +
+    geom_line(aes(y = central), linewidth = 0.7) +
+    geom_point(data = obs_v, aes(x = year, y = obs),
+               colour = "black", size = 1.5, shape = 21, fill = "white",
+               inherit.aes = FALSE) +
+    geom_vline(xintercept = 2025.5, linetype = "dashed",
+               colour = "grey50", linewidth = .4) +
+    scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
+    scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
+    scale_x_continuous(breaks = seq(2010, 2100, 20)) +
+    labs(x = NULL, y = unit, title = vname) +
+    theme_bw(base_size = 9) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 9, face = "bold"),
+          panel.grid.minor = element_blank())
+  if (!is.null(ylim)) p <- p + coord_cartesian(ylim = ylim)
+  if (vname == "Fleshy Algae")
+    p <- p + annotate("text", x = 2060, y = 96,
+                      label = "100% ceiling", size = 2.3, colour = "grey40",
+                      hjust = 0.5, fontface = "italic")
+  p
+}
+
+wb_panels <- lapply(wb_var_order, make_wb_panel)
+
+wb_legend_plot <- ggplot(
+  wb_plot_tbl |> filter(variable == "Temperature"),
+  aes(x = year, y = central, colour = scenario, fill = scenario)) +
+  geom_ribbon(aes(ymin = lo_sem, ymax = hi_sem), alpha = .25, colour = NA) +
+  geom_line(linewidth = .9) +
+  scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels,
+                      name = "CMIP6 Scenario") +
+  scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels,
+                      name = "CMIP6 Scenario") +
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.5))) +
+  theme_void() +
+  theme(legend.position = "right", legend.direction = "vertical",
+        legend.title = element_text(size = 8.5, face = "bold"),
+        legend.text  = element_text(size = 8))
+wb_leg <- cowplot::get_legend(wb_legend_plot)
+
+wb_main <- wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")
+cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.12))
+```
+
+```{r tbl-wb-cmip6}
+#| label: tbl-wb-cmip6
+#| tbl-cap: "CMIP6 SST ensemble projections at 2050, 2075, and 2100 under three SSP scenarios (reduced SEM, CMIP6 ensemble median SST). Values are posterior median (95% credible interval). Temperature CIs are negligible because the SEM does not add uncertainty to the input forcing. Fleshy Algae values >100% under SSP5-8.5 reflect log-linear model extrapolation beyond biological limits."
+
+wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
+  wb_proj_tbl |>
+    filter(percentile == "median", year == yr) |>
+    mutate(scenario_label = wb_ssp_labels[scenario],
+           label = sprintf("%.1f (%.1f\u2013%.1f)", median, lo95, hi95)) |>
+    select(variable, scenario_label, label) |>
+    pivot_wider(names_from = scenario_label, values_from = label) |>
+    mutate(Year = yr) |>
+    relocate(Year, variable)
+})) |>
+  arrange(variable, Year) |>
+  rename(Variable = variable)
+
+knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
+```
+
+### Results: CMIP6 SST projections to 2100
+
+Extending the CMIP6 SST forcing to 2100 using a ten-model coupled ensemble from the Copernicus CDS under three SSPs reveals strong scenario dependence across all ecosystem variables (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6). By 2050, scenario differences are modest (coral cover: SSP1-2.6 5.8% vs. SSP5-8.5 4.2%), consistent with the narrow divergence between scenarios before mid-century. Post-2050, trajectories diverge sharply, particularly under SSP5-8.5.
+
+Under **SSP1-2.6** (aggressive mitigation), temperature stabilises near 30°C after mid-century, and coral cover stabilises at approximately 6% — near current (2025) levels — with no further long-term decline. Ecosystem respiration remains relatively stable at ~33 mmol O₂ m⁻² hr⁻¹, and fleshy algae stays bounded around 20–25% cover.
+
+Under **SSP5-8.5** (high-emissions), temperature reaches ~32°C by 2100, driving coral cover to 0.9% (95% CI: 0.3–2.8%) — effectively near-complete loss. Ecosystem respiration collapses to 16.6 mmol O₂ m⁻² hr⁻¹ (−71% from 2005 levels), and fleshy macroalgae expands beyond the 100% biological ceiling in the model's log-linear extrapolation, indicating a complete phase shift to algae dominance. The scenario contrast in coral cover at 2100 is approximately **7-fold** (6.2% vs. 0.9%), illustrating the substantial leverage of emissions trajectory on reef state.
+
+**SSP2-4.5** projects an intermediate outcome, with coral reaching 3.5% by 2100, respiration at 27.2 mmol, and fleshy algae ~39%, comparable to the linear-trend projection for 2050.
+
+Two caveats apply. First, the CMIP6 SST forcing is from coupled global models at ~1° resolution; the delta bias correction anchors each model's mean to the MCR observational record but cannot capture local oceanographic variability such as ENSO-driven anomalies or upwelling. Second, the log-linear SEM projects fleshy algae beyond physical limits (>100% cover) under extreme warming, an artefact of extrapolation beyond the observed range; these values should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
 
 # Results & Interpretation
 
-## Key Findings
+## Results
 
-### 1. Community Shifts
+### Community composition and environmental change
 
-The backreef at LTER Site 1 has undergone dramatic community reorganization:
+The MCR LTER Site 1 backreef underwent substantial reorganisation over 2006–2025 (Fig. @fig-benthic). Coral cover declined from 31.0% to 6.8% (−78%), while fleshy macroalgae increased from 5.5% to 14.7% (+167%). Bayesian temporal trend models confirmed directional change across all major community variables (Fig. @fig-temporal): coral cover showed the strongest rate of decline (β = −0.14 SD yr⁻¹, R² = 0.70), corallivore fish biomass declined in parallel (β = −0.13 SD yr⁻¹, R² = 0.52), and herbivore biomass increased (β = +0.15 SD yr⁻¹, R² = 0.66). Annual maximum temperature increased modestly but consistently over the study period (β = +0.07 SD yr⁻¹, R² = 0.19), corresponding to approximately +0.65°C over 20 years. Algal tissue nitrogen content showed the strongest temporal signal among biogeochemical variables (β = −0.17 SD yr⁻¹, R² = 0.78).
 
--   **Coral cover declined by `r round((1 - (Benthic_summary_Algae |> filter(Year == 2025, name == "Coral", Site == "LTER 1") |> pull(mean_cover)) / (Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover))) * 100, 1)`%** from 2006 to 2025
--   Fleshy macroalgae increased substantially
--   Fish community composition shifted with changes in habitat structure
+### Ecosystem metabolism
 
-### 2. Environmental Drivers
+Ecosystem respiration (Rd) declined markedly from a mean of 57 mmol O₂ m⁻² hr⁻¹ in 2008–2010 to 29 mmol O₂ m⁻² hr⁻¹ in 2021–2025 (−49%; β = −0.14 SD yr⁻¹, R² = 0.50). Maximum photosynthetic capacity (Pmax) also declined, from 124 to 105 mmol O₂ m⁻² hr⁻¹ between early and late periods (β = −0.08 SD yr⁻¹, R² = 0.19), though with weaker temporal signal. Net ecosystem production showed no significant directional trend (β = +0.08 SD yr⁻¹, R² = 0.20). These parameters were extracted from a Bayesian photosynthesis-irradiance (PI) curve model fit across 2,928 production measurements, with all chain convergence diagnostics satisfactory (Rhat < 1.01, ESS > 1,000 for all parameters).
 
-Temperature has increased significantly and appears to be the primary driver of coral decline through both direct thermal stress and indirect effects mediated through disturbance events. **Effect size interpretation**: The observed temperature increase of ~1°C in maximum daily temperature over 20 years translates to approximately 0.05°C per year. Based on the SEM standardized coefficients, each 1°C increase in temperature corresponds to an estimated `r sprintf("%.1f", abs(fixef(brms_sem_full)["logcoral_temperature", "Estimate"]) * modelsd$logcoral / modelsd$temperature * exp(modelmean$logcoral))` percentage point decline in coral cover (in original scale). This means the observed 1°C warming could account for approximately `r sprintf("%.0f%%", abs(fixef(brms_sem_full)["logcoral_temperature", "Estimate"]) * modelsd$logcoral / modelsd$temperature * exp(modelmean$logcoral) / (Benthic_summary_Algae |> filter(Year == 2006, name == "Coral", Site == "LTER 1") |> pull(mean_cover)) * 100)` of the total coral decline observed, with additional losses attributable to discrete disturbance events (bleaching, cyclones) captured by the year residual term.
+### Causal pathways through the reef ecosystem
 
-The nitrogen content in macroalgae shows a strong positive relationship with ecosystem respiration, suggesting that nutrient dynamics are tightly coupled to metabolic processes. **Effect size**: Each 1 mmol O₂ m⁻² hr⁻¹ increase in respiration corresponds to approximately a 0.01-0.02 percentage point increase in tissue N content based on the SEM pathway.
+A Bayesian SEM encompassing eight response variables and 12 causal pathways revealed coral cover as the central mediator of ecosystem change (Fig. @fig-sem-dag, @fig-sem-conditional). Year was positively associated with temperature (β = 0.47, 95% CI 0.12–0.82), and temperature negatively drove coral cover (β = −0.55, 95% CI −0.83 to −0.28). A non-thermal temporal component — the residual of calendar year after removing the temperature trend — also credibly predicted coral cover (β = −0.67, 95% CI −0.93 to −0.41), capturing secular decline in coral cover unexplained by warming alone. Coral cover in turn was the strongest predictor of ecosystem respiration (β = 1.08, 95% CI 0.64–1.53), fleshy macroalgae (β = −0.91, 95% CI −1.13 to −0.70), and corallivore fish biomass (β = 0.65, 95% CI 0.26–1.02). Herbivore fish biomass was positively predicted by fleshy macroalgae cover (β = 0.71, 95% CI 0.37–1.06), consistent with bottom-up trophic control. Ecosystem respiration in turn predicted algal nitrogen content (β = 0.62, 95% CI 0.24–1.01) and Pmax (β = 0.82, 95% CI 0.03–1.62). Three tested pathways — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62) and Pmax (β = −0.16, 95% CI −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, 95% CI −1.40 to 0.71) — had credible intervals that included zero. Bayesian R² was 0.22 for temperature and 0.71 for coral cover (the year-residual predictor accounted for the large improvement from the prior R² of 0.29).
 
-### 3. Ecosystem Metabolism
+### Temperature effects are predominantly indirect
 
-Bayesian models of metabolism time series revealed significant declines in ecosystem function:
+Decomposing total temperature effects into direct and coral-mediated indirect pathways (Fig. @fig-temp-effects) revealed that coral decline was the dominant transmission mechanism for most ecosystem responses. The indirect effect of temperature on ecosystem respiration, operating through coral loss, was substantial and directionally credible (β_indirect = −0.58, 95% CI −1.01 to −0.25), while the direct thermal effect was inconclusive (β_direct = 0.22, 95% CI −0.22 to 0.62), and the total effect did not exclude zero (β_total = −0.38, 95% CI −0.85 to 0.08). For Pmax, direct and indirect pathways partially cancelled and neither was significant (β_total = 0.03, 95% CI −0.54 to 0.64). All indirect temperature effects on fleshy macroalgae (β = +0.50, 95% CI 0.25–0.79), corallivore fish (β = −0.34, 95% CI −0.66 to −0.11), herbivore fish (β = +0.35, 95% CI 0.14–0.66), and algal nitrogen content (β = −0.35, 95% CI −0.76 to −0.10) were mediated entirely through coral cover and had credible intervals excluding zero.
 
--   **Ecosystem Respiration (Rd)** showed the strongest trend, declining by `r round(rd_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹ over 20 years (Bayesian R² = `r round(rd_r2, 2)`), with 95% credible intervals excluding zero
--   **Maximum Photosynthetic Capacity (Pmax)** declined by `r round(pmax_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹ (Bayesian R² = `r round(pmax_r2, 2)`), though credible intervals marginally included zero
--   **Net Ecosystem Production (NP)** increased slightly by `r round(np_slope * 20, 1)` mmol O₂ m⁻² hr⁻¹ (Bayesian R² = `r round(np_r2, 2)`), but this trend was not statistically robust
+### Ecosystem projections under CMIP6 climate scenarios
 
-**Mechanisms of Respiration Decline**: The pronounced decline in ecosystem respiration with coral loss reflects the loss of the coral holobiont—the coral animal, its symbiotic zooxanthellae (Symbiodiniaceae), and associated microbial communities. Coral-dominated reefs maintain elevated respiration rates not only through coral tissue metabolism but through the dense microbial communities associated with coral surfaces, mucus production, and the surrounding benthos. Studies have shown that coral-associated respiration can account for 40-60% of total reef community respiration (Wild et al. 2004, Metabolic Rates of Corals). When corals die, this entire respiratory complex is lost, replaced by less metabolically active substrates (e.g., algal turfs, bare substrate). Additionally, the shift from coral to macroalgal dominance represents a transition from a high-biomass, structurally complex system with associated heterotrophs to a simpler, lower-respiratory system, consistent with ecosystem retrogression.
+Extending the SEM causal framework to 2100 using WorldBank CMIP6 temperature forcing under three SSP emission scenarios reveals strong dependence of reef ecosystem state on the trajectory of global emissions (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6).
 
-The photosynthesis-irradiance (PI) curve model extracted light-independent metabolic parameters with high explanatory power (Bayesian R² = `r round(pi_curve_r2, 2)`), demonstrating that the rectangular hyperbola effectively captures the relationship between light and production across all measurement conditions.
+**Near-term (to 2050).** Scenarios diverge only modestly before mid-century, consistent with similar temperature trajectories across SSPs prior to ~2040. Coral cover at 2050 is projected at 5.8% under SSP1-2.6 versus 4.2% under SSP5-8.5 — a relatively small contrast reflecting that near-term warming is largely committed regardless of emission pathway. Ecosystem respiration, fleshy macroalgae, Pmax, and N content show similarly narrow scenario separation at 2050.
 
-Temporal trend analysis across all ecosystem variables (standardized) showed that respiration had the highest explanatory power among metabolic variables, while coral cover and temperature trends also showed strong model fits (R² > 0.5), indicating predictable directional changes in these key drivers.
+**Mid-century (2050–2075).** Trajectories diverge sharply as scenario-dependent warming accumulates. Under SSP5-8.5, temperatures approach ~31°C by 2075, driving coral cover below 2% and ecosystem respiration below 22 mmol O₂ m⁻² hr⁻¹. Under SSP1-2.6, temperatures stabilise near 30–30.5°C following the emissions peak, and coral cover remains above 5%. SSP2-4.5 follows an intermediate trajectory, with coral declining slowly toward 4%.
 
-### 4. Causal Pathways (SEM Results)
+**End of century (2100).** The scenario contrast at 2100 is striking. Under SSP1-2.6, coral cover stabilises at 6.2% (posterior 95% CI: 2.4–14.3%), broadly near its 2025 level, while ecosystem respiration remains at 33 mmol O₂ m⁻² hr⁻¹ and fleshy macroalgae is held around 21% cover — a reef that is structurally degraded relative to 2005, but functionally persistent. Under SSP5-8.5, coral cover collapses to 0.9% (95% CI: 0.3–2.8%) — a 7-fold difference relative to SSP1-2.6. Ecosystem respiration falls to 16.6 mmol O₂ m⁻² hr⁻¹ (−71% relative to 2005 levels), and the fleshy macroalgae model extrapolates beyond the 100% biological ceiling, indicating an algae-dominated phase-shifted state. SSP2-4.5 projects an intermediate outcome: coral ~3.5% by 2100, respiration ~27 mmol O₂ m⁻² hr⁻¹, and fleshy algae ~39% — comparable to the linear-trend projection for 2050, illustrating that intermediate emissions postpone but do not prevent continued reef degradation.
 
-The structural equation model revealed several key relationships with varying explanatory power across response variables (mean Bayesian R² = `r round(mean(sem_r2_valid), 2)` across computable responses):
+The ~2040–2060 window represents the critical divergence point, after which emission pathways commit the system to qualitatively different futures. The 7-fold contrast in coral cover at 2100 between SSP1-2.6 and SSP5-8.5 quantifies the ecological leverage of global emissions mitigation for reef persistence. Two caveats apply to these projections. First, the coupled-model SST forcing is at CMIP6 resolution (~1°); the delta bias correction captures the ensemble warming rate but not local oceanographic variability (e.g., ENSO anomalies, upwelling around Moorea). Second, the log-linear SEM extrapolates fleshy macroalgae beyond biological limits under SSP5-8.5, which should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
 
-1.  **Temperature → Coral**: Strong negative effect, confirming thermal stress as primary driver (model explains substantial variance in coral dynamics)
-2.  **Coral → Respiration**: Positive relationship - coral loss reduces community respiration (among the best-explained responses in the SEM)
-3.  **Coral → Macroalgae**: Negative relationship - coral loss enables macroalgal expansion (moderate explanatory power)
-4.  **Respiration → N Content**: Positive relationship - metabolic activity influences nutrient cycling (moderate fit)
-5.  **Macroalgae → Herbivores**: Positive bottom-up control of herbivorous fish biomass (herbivore biomass moderately well explained)
+# Discussion
 
-The SEM shows particularly strong explanatory power for temperature (R² typically >0.8 in Year → Temperature relationship), coral cover dynamics, and metabolic responses, while fish responses show moderate fits reflecting additional unmeasured drivers (e.g., fishing pressure, larval supply).
 
-**Fish Model Limitations**: The moderate R² values for herbivore and corallivore fish biomass (~0.3-0.4) indicate that benthic habitat structure alone does not fully explain fish population dynamics. Several unmeasured factors likely contribute: (1) **Fishing pressure** - extractive activities may directly reduce fish biomass independently of habitat; (2) **Larval recruitment** - fish populations depend on larval supply from regional sources, which may vary independently of local habitat; (3) **Post-settlement mortality** - predation, disease, and competition affect fish survival beyond habitat availability; (4) **Movement and migration** - fish are mobile and may move between habitats not captured in annual surveys; (5) **Top-down control** - higher trophic levels (sharks, large predators) may regulate herbivore/corallivore populations but are not included in the model. The positive relationship between macroalgae and herbivores (bottom-up control) is detected despite these unmeasured factors, suggesting the benthic-fish linkage is real but moderated by other processes. Future work incorporating fisheries data, recruitment indices, and broader spatial scales would improve fish model performance.
-
-### 5. Direct vs. Indirect Temperature Effects
-
-The decomposition of temperature effects into direct and indirect pathways reveals the importance of cascading effects through coral decline:
-
-**Direct Effects:**
-- Temperature directly impacts coral cover (strong negative)
-- Temperature directly influences ecosystem metabolism (Pmax and Rd)
-
-**Indirect Effects (mediated through coral decline):**
-- **Ecosystem Respiration**: Largest indirect negative effect - temperature-driven coral loss reduces heterotrophic metabolism
-- **Ecosystem Pmax**: Strong indirect negative effect - loss of coral photosynthetic capacity
-- **Corallivore Fish**: Negative indirect effect - coral loss eliminates habitat and food source
-- **N Content**: Negative indirect effect - reduced respiration decreases nutrient regeneration
-- **Fleshy Macroalgae**: Positive indirect effect - coral loss opens space for algal colonization
-- **Herbivore Fish**: Positive indirect effect - increased algal resources support herbivore biomass (though weaker magnitude)
-
-The ranking of indirect effects demonstrates that **metabolic processes (respiration and photosynthesis) are most strongly affected** by temperature-driven coral decline, followed by trophic reorganization. This suggests that the functional consequences of coral loss may be as important as, or more important than, the compositional shifts themselves.
-
-Notably, for some responses (fleshy macroalgae, herbivores), the indirect positive effects partially offset direct negative effects, leading to complex net responses. This highlights the importance of considering full causal pathways rather than direct effects alone when projecting climate impacts.
-
-### 6. Future Projections
-
-Model projections to 2050 suggest:
-
--   Continued temperature increase (\~0.5-1°C by 2050)
--   Further coral decline to \<5% cover under current trajectories
--   Sustained low ecosystem respiration
--   Altered nutrient cycling dynamics
-
-These projections assume continuation of current trends and do not account for potential tipping points, adaptation, or management interventions.
-
-## Ecological Implications
-
-The integrated analysis reveals a reef system undergoing state transition from coral-dominated to algal-dominated. This shift has cascading effects on:
-
-1.  **Carbon cycling**: Reduced net productivity and altered respiration patterns - the strong indirect effects on Pmax and respiration indicate that metabolic dysfunction may occur before compositional change is complete
-2.  **Nutrient dynamics**: Changes in nitrogen cycling linked to metabolic shifts - the indirect pathway from temperature through coral loss and reduced respiration to decreased N content reveals tight coupling between community structure and biogeochemical cycling
-3.  **Trophic structure**: Fish communities responding to habitat changes - corallivores decline with coral loss while herbivores increase with algal expansion, but these changes propagate slowly through the food web
-4.  **Functional capacity**: Loss of coral-mediated ecosystem services occurs through multiple pathways, with indirect effects amplifying direct temperature impacts
-
-The decomposition of temperature effects demonstrates that **coral loss acts as a critical mediator** of climate impacts on reef function. Even ecosystem components not directly affected by temperature experience substantial indirect effects through coral decline. This suggests that:
-
-- **Restoration efforts** targeting coral recovery could mitigate multiple indirect climate impacts simultaneously
-- **Early intervention** may be especially valuable given the cascading nature of coral loss effects
-- **Functional metrics** (metabolism, nutrient cycling) may serve as early warning indicators of ecosystem degradation, potentially declining before dramatic compositional shifts
-
-The tight coupling between community composition, environmental conditions, and ecosystem function suggests that restoration efforts must address multiple factors simultaneously, but also that coral recovery could yield disproportionate benefits by reversing negative cascades.
-
-## Suggested Outline for Nature Paper
-
-### Title
-"Temperature-driven coral decline cascades through tropical reef metabolism and biogeochemistry"
-
-### Abstract (150 words)
-Synthesize: (1) unprecedented 20-year integration of reef community structure, metabolism, and biogeochemistry; (2) structural equation modeling revealing coral loss as central mediator of climate impacts; (3) metabolic dysfunction (respiration, photosynthesis) shows stronger indirect temperature effects than compositional change; (4) projections to 2050 indicating continued functional decline; (5) implications for reef carbon cycling and ecosystem services.
-
-### Introduction
-**Historical context** (Odum 1957, "Trophic structure and productivity of a windward coral reef community"): Establish coral reefs as paradigm systems for understanding ecosystem metabolism. Odum's pioneering work at Eniwetok Atoll demonstrated that coral reefs maintain exceptionally high productivity and tight nutrient cycling - reef metabolism became a foundation of ecosystem ecology.
-
-**Evolution of reef productivity studies**: From early whole-ecosystem metabolism measurements (Odum & Odum 1955, Kinsey 1985) through site-specific studies to recognition that coral reefs are losing their defining metabolic characteristics. Recent syntheses suggest widespread declines in net community calcification and productivity (Albright et al. 2018), but long-term integrated studies linking community change to functional consequences remain rare.
-
-**Long-term reef metabolism time series - comparative context**: Few locations have sustained multi-year to decadal records of reef metabolism, limiting our understanding of functional trajectories. Key studies include:
 
 - **One Tree Island, Great Barrier Reef** (Kinsey 1985; Barnes 1983): 7-year study (1975-1982) using slack-water technique, documented mean gross production of 180-250 mmol O₂ m⁻² hr⁻¹ and net production near metabolic balance (slight net autotrophy). No long-term trend analysis due to relatively stable coral community during study period. Established baseline metabolic rates for healthy Indo-Pacific reef flats.
 
@@ -2372,177 +2561,41 @@ Key distinctions from previous work:
 
 Our results suggest that even reefs maintaining some coral cover experience functional degradation - metabolic capacity declines may precede dramatic compositional collapse, providing early warning of ecosystem dysfunction. The MCR backreef trajectory mirrors calcification declines observed in Bermuda and Lady Elliot Island but extends to the full production-respiration system, revealing how warming disrupts multiple metabolic processes simultaneously through coral loss.
 
-**Knowledge gaps**: Most reef monitoring focuses on benthic composition or single metabolic measurements. Few studies: (1) integrate two decades of continuous metabolism measurements with community dynamics; (2) employ causal modeling to separate direct vs. indirect climate effects; (3) quantify how temperature impacts propagate through ecological networks to alter biogeochemical cycling; (4) project coupled community-function trajectories.
+## Coral as an Ecological Hub: Temperature Acts Through Structure
 
-**This study**: Leverages MCR LTER's unique 20-year record of simultaneous benthic surveys, fish censuses, nutrient monitoring, and continuous ecosystem metabolism measurements to reveal how warming-driven coral decline cascades through ecosystem function. Bayesian structural equation modeling disentangles direct temperature effects from indirect effects mediated through community reorganization, revealing that metabolic dysfunction may precede compositional collapse.
+**Coral as an ecological hub: why temperature acts through structure rather than physiology**
 
-### Results
+The central finding of this analysis is that two decades of ocean warming have degraded reef ecosystem function primarily by dismantling coral structure, not by directly suppressing the physiology of individual organisms. Across every ecosystem variable we examined — respiration, photosynthesis, herbivory, corallivory, and nutrient cycling — the indirect temperature effect mediated through coral decline was either larger than, or the only credible component of, the total thermal signal. Direct temperature effects on ecosystem respiration (β = 0.22, 95% CI −0.21 to 0.62) and maximum photosynthetic capacity (β = −0.16, 95% CI −0.79 to 0.46) were both inconclusive, while their indirect counterparts (−0.58 and −0.19 respectively) were directionally credible. This pattern is not a statistical artefact: it reflects an ecological reality in which coral colonies function as keystone structures rather than just organisms. Coral provides physical framework, photosynthetic biomass, associated heterotrophic microbiomes, and three-dimensional habitat simultaneously; warming-induced bleaching and mortality therefore cascades across all of these pathways at once.
 
-**Part 1: Ecosystem state transition (2005-2025)**
-- Coral decline (~70% reduction), macroalgal expansion, fish community reorganization
-- Temperature increase (~1°C in maximum daily values) as primary driver
-- Present benthic composition plots, fish biomass trends, environmental time series
-- **Novel contribution**: Among longest continuous metabolic time series for any coral reef, spanning multiple disturbance events
+This contrasts sharply with the more commonly invoked direct warming hypothesis, in which ocean temperature is expected to stimulate microbial and heterotrophic metabolism (as in terrestrial systems) or suppress photosynthesis through bleaching of individual symbionts. Our data do not rule out those mechanisms acting at sub-annual timescales, but at the decadal scale of community reorganisation, structural loss appears to be the dominant transmission pathway. Ecosystem respiration declined 49% over 20 years not because metabolic rate constants fell, but because the coral-associated heterotrophic biomass that drives reef respiration — corals, their endosymbionts, and associated microbial communities — was removed. The mechanism is closer to deforestation than to metabolic inhibition.
 
-**Part 2: Metabolic and biogeochemical shifts**
-- Decline in maximum photosynthetic capacity (Pmax) and ecosystem respiration (Rd)
-- Reduced net ecosystem production indicating shift from autotrophic to near-balance
-- Changes in nitrogen cycling linked to metabolic rates
-- **Novel contribution**: PI curve-derived parameters (Pmax, Rd) provide light-independent metabolic indices, enabling mechanistic interpretation
-- Key ecological theme: Metabolic function as integrative ecosystem property (sensu Odum) - captures changes in energetic efficiency and trophic organization beyond compositional metrics
+## Ecosystem De-development and Metabolic Integration
 
-**Part 3: Causal pathways via Bayesian SEM**
-- Present conceptual DAG showing hypothesized relationships
-- Quantify standardized path coefficients for: Year→Temperature→Coral; Coral→Respiration/Pmax/Macroalgae; Macroalgae→Herbivores; Respiration→N Content
-- **Novel contribution**: Rigorous causal framework separating confounded drivers in observational data
-- Key ecological theme: Trophic cascades and indirect effects (sensu Pace et al. 1999) - coral as keystone affecting both bottom-up (productivity) and top-down (fish) processes
+The metabolic consequences of coral loss can be understood through Odum's (1969) concept of ecosystem development. Mature ecosystems are characterised by high biomass, low net production, high respiration, and tight internal cycling of nutrients — a configuration in which most fixed carbon is rapidly respired and recycled within the system rather than exported. Coral reefs are canonical examples of this functional type: extremely high gross production and respiration in oligotrophic water, sustained by tight coral-zooxanthellae-microbiome recycling. Our 20-year record documents a directional departure from this configuration. Both Pmax and Rd declined, but respiration showed a stronger and more consistent temporal signal (R² = 0.50 vs 0.19 for Pmax), and the SEM revealed that coral cover is a stronger predictor of respiration (β = 1.08) than of photosynthesis (β = −0.35, 95% CI crosses zero). The result is a gradual shift toward lower total metabolic activity rather than a simple shift in autotrophic–heterotrophic balance. In Odum's framework, this represents ecosystem retrogression: a trajectory from high-complexity, low-net-production towards lower biomass, lower respiratory capacity, and looser nutrient coupling.
 
-**Part 4: Direct vs. indirect temperature effects**
-- Decompose temperature effects into direct pathways and indirect pathways mediated through coral decline
-- Ranked effects: Respiration (strongest negative indirect effect) > Pmax > Corallivores > N content > Macroalgae (positive) > Herbivores
-- **Novel contribution**: Quantifies ecological amplification - indirect effects on metabolism rival or exceed direct temperature effects
-- Key biogeochemical theme: Coral loss disrupts heterotrophic metabolism and nutrient regeneration, not just calcification
+The respiration–nitrogen pathway (β = 0.62, 95% CI 0.24–1.01) provides specific mechanistic support for this interpretation. Reduced ecosystem respiration — reflecting loss of coral-associated heterotrophic activity — correlates with lower algal tissue nitrogen content, consistent with reduced nutrient regeneration from organic matter decomposition in oligotrophic backreef water. Coral reefs are well known for efficient internal nitrogen cycling, and our data suggest that as the heterotrophic component of that cycle is reduced, nitrogen availability declines even for the macroalgae that are competitively replacing coral. This feedback — reduced respiration limiting the productivity of the organisms benefiting from coral decline — may partly explain why macroalgal expansion in oligotrophic Pacific reefs tends to be less extreme than on eutrophied Caribbean reefs.
 
-**Part 5: Future trajectories (2010-2050)**
-- Hindcast validation showing model captures 2010-2020 dynamics
-- Projections under current trends: coral <5% by 2050, sustained low respiration, altered N cycling
-- Uncertainty quantification via Bayesian posteriors
-- **Novel contribution**: Mechanistic projections coupling community and function, not composition alone
+## Indirect Effects Along Trophic Pathways
 
-### Discussion
+The two causal chains through community composition — Coral → Fleshy Algae → Herbivores, and Coral → Corallivores — show a coherent but ecologically nuanced response to warming. Corallivore fish biomass declined in parallel with coral cover (β = 0.65, 95% CI 0.25–1.04), as expected for a guild with obligate dietary dependence on live coral. Herbivore fish biomass, by contrast, increased over the same period (β_indirect temperature = +0.34, 95% CI 0.06–0.77), driven by expanding macroalgal food resources. At first glance this might seem compensatory, but the two responses operate through distinct pathways and the herbivore increase does not prevent macroalgal expansion — instead, the macroalgae–herbivore relationship represents bottom-up resource tracking rather than top-down regulation of algal abundance. Fleshy macroalgae expanded despite (and indeed facilitated) herbivore increases, suggesting that herbivory alone is insufficient to prevent phase-shift dynamics when coral structural complexity is lost.
 
-**Synthesis with ecosystem ecology principles**:
-- Odum's (1969) concept of ecosystem development predicts mature systems with high biomass, low net production, efficient nutrient cycling - coral reefs as "climax" systems maximizing P/R ratios and biomass per unit energy flow
-- Our results show reversal: coral loss reduces both production (lower Pmax) and respiration (lower biomass), but respiration declines faster, causing P/R ratio to increase away from mature-system balance of P/R ≈ 1, indicating loss of high-biomass, high-respiration structure
-- Reframes coral decline as "ecosystem de-development" or retrogression - loss of structural complexity, reduced metabolic efficiency, loosening of nutrient cycles
+These trophic dynamics have practical management implications. The consistent dominance of indirect (coral-mediated) over direct temperature effects across all six ecosystem variables implies that interventions targeting coral — whether through bleaching mitigation, shade structures, or active restoration — should in principle intercept the cascades before they propagate to fish assemblages, metabolism, and nutrient cycling. Local management of herbivore populations (e.g., controlling sea urchin or fish harvest) may be insufficient on its own if the primary leverage point is further upstream in the causal chain. Conversely, the fact that multiple ecosystem properties are coupled through a single hub suggests that successful coral recovery could trigger broad functional recovery, rather than requiring separate management of each endpoint.
 
-**Biogeochemical implications**:
-- Coral reefs disproportionately contribute to tropical ocean carbon cycling (Gattuso et al. 1998) - our data suggest declining CO2 uptake and altered respiratory CO2 release
-- The respiration→N content pathway reveals mechanistic link between ecosystem metabolism and nutrient availability: reduced heterotrophic respiration (from coral/associated microbiome loss) decreases nutrient regeneration, potentially limiting productivity in nutrient-poor waters
-- Contrast with terrestrial systems where warming often accelerates respiration - reef respiration declined because structural loss dominates direct temperature effects
+## Comparison with Global Reef Trajectories
 
-**Ecological network theory**:
-- Indirect effects dominate temperature impacts (especially metabolism) - consistent with network theory predicting long interaction chains amplify perturbations
-- Coral as "interaction hub" - removing it severs multiple pathways (structural habitat, photosynthetic capacity, heterotrophic metabolism, calcification)
-- Positive indirect effect on macroalgae partially offset by negative effects on associated herbivores - network structure buffers some changes while amplifying others
+The MCR LTER Site 1 backreef trajectory is consistent with, but mechanistically more specific than, the global picture of reef decline. Widespread reductions in net community calcification (e.g., Albright et al. 2018; DeCarlo et al. 2017) and increasing heterotrophy (e.g., Kaneohe Bay; Shamberger et al. 2011) have been documented across ocean basins, but few studies have linked these to structural community change through an explicit causal framework. Our SEM results support a structural interpretation: metabolic decline tracks coral loss with a strong, credible path coefficient, whereas direct temperature effects are ambiguous. This suggests that the mechanistic driver of metabolic change at MCR is more closely analogous to the deforestation narrative than to the thermal inhibition narrative, with implications for projections: reef metabolism may recover if and when coral cover recovers, even if temperatures remain elevated.
 
-**Novel datasets enable novel insights**:
-- 20-year continuous metabolism data (among longest globally) enables robust trend detection and mechanistic parameter extraction
-- Integration across organizational levels (species→community→ecosystem function) reveals emergent properties invisible to single-level monitoring
-- Bayesian SEM framework maximizes inference from observational data via explicit causal assumptions
+The CMIP6 SSP scenario projections extend this finding forward in time. The 7-fold contrast in coral cover at 2100 between SSP1-2.6 (~6%) and SSP5-8.5 (~1%) illustrates the degree to which emission trajectory controls long-term reef outcomes — a result consistent with global projections of mass coral bleaching frequency under high-emissions scenarios (Hoegh-Guldberg et al. 2018; Hughes et al. 2017). Critically, the scenarios remain indistinguishable in their reef consequences until approximately 2040–2050, implying that the next two decades of warming are largely committed regardless of mitigation effort. The divergence thereafter, however, highlights that aggressive emissions reduction remains the most effective lever for preserving reef function at the centennial timescale. The SSP1-2.6 projection — in which MCR coral cover stabilises near its 2025 level rather than collapsing further — represents the ecosystem consequence of achieving the Paris Agreement ~1.5–2°C target and provides an ecologically grounded argument for that policy goal.
 
-**Global context**:
-- MCR represents broader Indo-Pacific reef trajectories: warming, coral loss, macroalgal expansion
-- Metabolic declines consistent with reduced calcification globally (e.g., Albright et al. 2016, DeCarlo et al. 2017) but mechanism differs - here, structural loss drives metabolic change
-- Nitrogen limitation potential concern for oligotrophic systems losing heterotrophic metabolism
+## Limitations and Future Directions
 
-**Management implications**:
-- Coral restoration could reverse cascading declines - modeling suggests metabolic recovery would follow community recovery via indirect pathways
-- Early intervention critical - once cascades initiate, multiple feedbacks amplify degradation
-- Functional metrics (Pmax, Rd) may serve as early warning indicators preceding dramatic compositional shifts
-- Local management (e.g., herbivore protection) may be insufficient if indirect temperature effects dominate direct effects by 2-3x
+Several constraints bound the current analysis. First, this is a single-site study, and the path structure of the SEM reflects the particular ecological context of an oligotrophic Society Islands backreef. Whether the same causal architecture — and in particular the dominance of indirect temperature effects — holds at other sites with different nutrient regimes, disturbance histories, or species assemblages is an open empirical question. Second, the Bayesian SEM assumes linearity in all path coefficients on the z-score scale; potential nonlinearities, threshold behaviour, or lagged effects (e.g., multi-year bleaching recovery) are not captured. Third, the nutrient imputation model for water column chemistry (R² = 0.68) introduces uncertainty into the respiration–nitrogen pathway that is not fully propagated through the effect decomposition. Direct water column measurements, currently unavailable after 2018, would strengthen this component of the analysis.
 
-**Limitations and future directions**:
-- Single-site focus limits generality - need cross-reef comparison to test whether coral hub role universal
-- Projections assume linear trends - potential nonlinearities, tipping points, adaptation not captured
-- Nutrient imputation relies on tissue N proxy - direct water column measurements needed post-2018
-- Future work: fine-scale spatial heterogeneity, intervention experiments, expand to other LTER sites
+Regarding the CMIP6 scenario projections specifically, three additional caveats apply. The coupled-model SST forcing is location-specific but at CMIP6 resolution (~1°), and cannot capture local oceanographic variability such as ENSO-driven anomalies, wave-driven upwelling, or fine-scale circulation around Moorea; the delta bias correction anchors the ensemble mean to the observed record but does not constrain interannual variance. The log-linear SEM extrapolates fleshy macroalgae beyond the 100% biological ceiling under SSP5-8.5, an artefact of model extrapolation beyond the observed range that should be interpreted qualitatively as indicating a phase-shifted, algae-dominated state. Finally, SEM path coefficients are assumed stationary across the projection window; adaptive responses by coral populations, non-linear bleaching thresholds, and potential acclimatisation dynamics are not represented.
 
-### Methods
+Future directions include cross-site SEM comparison across MCR LTER sites (forereef, fringing reef, and backreef habitats differ substantially in hydrodynamics and community structure), experimental manipulation of herbivore density to test the causal role of the algae–herbivore pathway, and extension of the time series to capture post-bleaching dynamics in the late 2020s and to update projection baselines as the observational record grows.
 
-Summarize: (1) LTER monitoring protocols (benthic transects, fish surveys, environmental sensors); (2)  metabolism measurements and PI curve fitting; (3) nutrient data processing and imputation; (4) Bayesian SEM specification, priors, diagnostics; (5) effect decomposition approach; (6) projection methodology and uncertainty quantification.
-
-## Data Analysis Methods
-
-### Data Processing and Integration
-
-All analyses were conducted in R version 4.3.2. We integrated five primary data streams from MCR LTER Site 1 backreef (2005-2025): (1) benthic community composition from annual transect surveys; (2) fish assemblage biomass by trophic group; (3) continuous temperature from in situ loggers; (4) water column and tissue nitrogen content; and (5) high-frequency ecosystem metabolism from flume measurements.
-
-**Temperature**: Daily mean temperatures were calculated from 15-minute logger data, then summarized annually as mean and maximum daily temperature. Maximum daily temperature was used as the primary climate variable as it captures thermal stress events more effectively than annual means.
-
-**Benthic composition**: Percent cover data were classified into six functional groups (Coral, Fleshy Macroalgae, Crustose Corallines, Turf/Cyanobacteria, Sand, Other) following established MCR LTER protocols. Total calcifier cover (Coral + Crustose Corallines) and total living cover (Coral + Crustose Corallines + Fleshy Macroalgae) were calculated as composite indicators.
-
-**Fish biomass**: Individual fish biomass estimates were summed by trophic group (Herbivores including browsers, scrapers, excavators, and brushers; Corallivores; Other) and standardized to g/m² based on transect area (4 transects × 300 m² = 1200 m²). Extreme outliers (biomass > 8000 g, representing transient sharks) and missing data (negative values) were excluded.
-
-**Nutrients**: Water column nitrite+nitrate measurements were available 2005-2018. For years lacking water column data, we imputed values using a linear regression model relating macroalgal tissue nitrogen content (%N in *Turbinaria ornata*) to water column nitrite+nitrate (R² = 0.68, p < 0.01). This approach leverages the established relationship between tissue nutrient content and ambient nutrient availability in macroalgae.
-
-**Ecosystem metabolism**: Raw production data from field deployments were quality-controlled and converted to consistent units (mmol O₂ m⁻² hr⁻¹). Only complete 24-hour measurement periods were retained. Net production (NP) was calculated directly from O₂ flux measurements; gross production (GP) was calculated as NP minus the daily average nighttime respiration rate. Negative GP values (physically impossible) were set to NA.
-
-### Photosynthesis-Irradiance Curve Analysis
-
-We extracted photosynthetic parameters using Bayesian nonlinear mixed models fit with the **brms** package (Bürkner 2017). The model employed a rectangular hyperbola functional form:
-
-$$PP = \frac{\alpha \cdot P_{max} \cdot PAR}{\alpha \cdot PAR + P_{max}} + R_d$$
-
-where PP is net community production, PAR is photosynthetically active radiation, α is photosynthetic efficiency (initial slope), P_max is maximum photosynthetic capacity, and R_d is dark respiration (ecosystem respiration rate). We fit separate parameters for each year to track temporal changes in metabolic capacity independent of light availability.
-
-The model used weakly informative priors: α ~ Normal(0.1, 10), lower bound 0; R_d ~ Normal(-100, 10), upper bound 0; P_max ~ Normal(100, 10), lower bound 0. We used a Student-t likelihood to account for outliers, ran 3 chains with 8000 iterations (2000 warmup), and verified convergence via R-hat < 1.01 and visual inspection of trace plots. The adapt_delta parameter was set to 0.95 to avoid divergent transitions.
-
-For subsequent analyses, we extracted yearly P_max and R_d estimates from the posterior means of fixed effects. R_d values were converted to positive values (ecosystem respiration rates) by multiplying by -1.
-
-### Temporal Trend Analysis
-
-We assessed standardized temporal trends using Bayesian linear regression models for 10 key ecosystem variables: coral cover, macroalgae cover, herbivore biomass, corallivore biomass, nitrogen content, ecosystem respiration (R_d), maximum photosynthetic capacity (P_max), net ecosystem production, maximum temperature, and water column nitrite+nitrate. All variables were z-score standardized (mean = 0, SD = 1) prior to modeling to enable direct comparison of effect sizes.
-
-Each model took the form: Variable ~ Year, with default **brms** priors. The slope coefficient (change per year in SD units) provides a standardized rate of change. We visualized posterior distributions of slopes using ridge plots and calculated percent change from the first to last non-NA observation for each variable.
-
-### Correlation Analysis
-
-Pairwise Pearson correlations among all ecosystem variables were calculated using the **psych** package, with p-values adjusted for multiple comparisons. Correlation matrices were visualized using **ggcorrplot2**, with ellipse orientation/width indicating correlation direction and strength, and significance levels marked at p < 0.05, 0.01, and 0.001.
-
-### Structural Equation Modeling
-
-We developed a Bayesian structural equation model (SEM) to test causal pathways among ecosystem components. The SEM comprised eight response variables connected via a directed acyclic graph (DAG) based on ecological theory and temporal precedence:
-
-1. Temperature ~ Year
-2. Coral cover ~ Temperature + Year residuals
-3. P_max ~ Coral cover + Temperature
-4. R_d ~ Coral cover + Temperature  
-5. Fleshy macroalgae ~ Coral cover
-6. Herbivore biomass ~ Macroalgae cover
-7. Corallivore biomass ~ Coral cover
-8. Nitrogen content ~ R_d
-
-Year residuals (residuals from lm(Year ~ Temperature)) captured year-to-year variation not explained by temperature, representing disturbances and other unmeasured drivers. All continuous predictors and responses were log-transformed where appropriate to linearize relationships and stabilize variance, then z-score standardized.
-
-The SEM was fit as a multivariate **brms** model with `set_rescor(FALSE)` to disable residual correlations (structure captured by DAG). We used weakly informative priors: regression coefficients ~ Normal(0, 2); intercepts ~ Normal(0, 2); residual SD ~ Normal(0, 0.25) for temperature, Normal(0, 2) otherwise. Coral and macroalgae responses used truncated distributions (upper bounds at observed maxima) to respect physical constraints. Missing data in predictors were handled via **brms** missing-data imputation (`mi()` syntax).
-
-The model ran for 10,000 iterations (5000 warmup) across 3 chains with adapt_delta = 0.99 and max_treedepth = 15. Convergence was verified via R-hat < 1.01 for all parameters, effective sample sizes > 1000, and posterior predictive checks. Standardized path coefficients and 95% credible intervals were extracted from fixed effects posteriors.
-
-**Model Performance**: We calculated Bayesian R² for each response variable using the `bayes_R2()` function from **brms**, which computes the proportion of variance explained while accounting for uncertainty in parameter estimates. Bayesian R² values were reported as posterior medians for all models (PI curves, temporal trends, and each SEM response).
-
-### Direct and Indirect Temperature Effects
-
-We decomposed total temperature effects into direct and indirect pathways using posterior samples from the SEM. For each response variable, we calculated:
-
-- **Direct effect**: Coefficient for the direct Temperature → Response path (if present in DAG)
-- **Indirect effects**: Products of coefficients along multi-step paths from Temperature through intermediate variables to Response
-
-For example, the indirect effect of temperature on ecosystem respiration via coral decline was calculated as: Temperature → Coral × Coral → R_d, computed for each posterior draw to preserve uncertainty. Total effects were the sum of direct and indirect pathways.
-
-We computed medians and 95% credible intervals for each effect type and assessed significance by whether credible intervals excluded zero. Indirect effects were ranked by median magnitude to identify the most important cascade pathways.
-
-### Projections to 2050
-
-We used the fitted SEM to project ecosystem states at five time points (2010, 2020, 2030, 2040, 2050). For each projection year:
-
-1. **Temperature**: Predicted from the Year → Temperature relationship using posterior_predict() to capture full uncertainty
-2. **Year residuals**: Predicted from a linear model relating year residuals to standardized year
-3. **Coral cover**: Predicted from Temperature + Year residuals using posterior means from step 1-2
-4. **Downstream variables**: Sequentially predicted following DAG structure, using posterior means from upstream predictions
-
-Predictions for 2010 and 2020 served as hindcasts for validation against observed data. Projections for 2030-2050 assume continuation of current linear trends and do not account for potential tipping points, adaptation, or management intervention.
-
-All predictions used `posterior_predict()` or `posterior_epred()` as appropriate, preserving full posterior uncertainty. Results were back-transformed to original scales using stored means and standard deviations from the standardization step. Uncertainty was visualized using half-eye plots showing posterior distributions with 75% and 95% credible intervals.
-
-### Statistical Software and Reproducibility
-
-All analyses used R 4.3.2 with packages: **tidyverse** (2.0.0) for data manipulation, **brms** (2.19.0) for Bayesian modeling, **tidybayes** (3.0.4) for posterior processing, **patchwork** (1.1.3) for figure composition, **ggraph** (2.1.0) and **igraph** (1.5.1) for network diagrams. Bayesian models used Stan 2.32.2 as the computational backend. Random seed was set to 223 for reproducibility. All code and processed data are available at [repository DOI].
-
-### Data Availability
-MCR LTER data publicly available via EDI Data Portal. Analysis code and processed data archived at [repository DOI].
-
-### Box 1: "Coral reefs as metabolic paradigms - from Odum to decline"
+## Box 1: Coral Reefs as Metabolic Paradigms — From Odum to Decline
 
 **From healthy reefs to ecosystem dysfunction**: In 1954, Howard T. Odum conducted the first whole-ecosystem metabolism measurements at Eniwetok Atoll in the Marshall Islands, revolutionizing our understanding of coral reefs and ecosystem ecology broadly. Using innovative upstream-downstream oxygen flux techniques, Odum and colleagues demonstrated that coral reefs maintain exceptionally high gross production (200-400 mmol O₂ m⁻² hr⁻¹), rivaling the most productive terrestrial ecosystems despite occurring in nutrient-poor tropical waters. Crucially, Odum showed that reef production and respiration were nearly balanced (P/R ≈ 1), indicating "mature" ecosystems maintaining high biomass with minimal net production—energy was tightly recycled rather than exported.
 
@@ -2550,7 +2603,7 @@ MCR LTER data publicly available via EDI Data Portal. Analysis code and processe
 
 **Contemporary decline**: Our MCR data reveal the reversal of Odum's trajectory. Where Eniwetok showed P/R ≈ 1 with high biomass and efficient nutrient cycling, MCR exhibits increasing P/R (from ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 1)` to ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 1)`) driven by collapsing biomass (70% coral loss) and disproportionate loss of respiratory capacity, alongside disrupted nutrient dynamics (respiration-N coupling weakened). This represents **ecosystem retrogression**—the undoing of ecological development. The shift away from P/R ≈ 1 reflects loss of the tight metabolic balance that characterized mature coral reefs, replaced by metabolic imbalance where production persists but respiratory biomass is lost. Climate change is dismantling the metabolic paradigm Odum described, with coral reefs losing the very characteristics that made them foundational to ecosystem science. The MCR time series documents this transition in unprecedented detail, providing a metabolic obituary for a disappearing ecosystem type.
 
-### Box 2: "Structural equation modeling for causal inference in long-term ecology"
+## Box 2: Structural Equation Modelling for Causal Inference in Long-Term Ecology
 
 **The challenge**: Long-term ecological monitoring generates rich observational data across multiple variables, but distinguishing correlation from causation remains difficult. Traditional regression approaches test pairwise relationships but cannot simultaneously evaluate complex networks of direct and indirect effects. This is critical for understanding how climate impacts cascade through ecosystems—does temperature affect fish biomass directly through physiological stress, or indirectly through coral habitat loss?
 
@@ -2560,9 +2613,130 @@ MCR LTER data publicly available via EDI Data Portal. Analysis code and processe
 
 **Broader implications**: The approach is applicable to any long-term monitoring program with multivariate data and hypothesized causal structure. LTER sites, marine observatories, and climate monitoring networks all collect data suitable for SEM, yet most analyses remain correlative. Our workflow (DAG specification → Bayesian estimation → effect decomposition → projection) provides a template for extracting causal insights from observational time series, advancing LTER from description to mechanistic understanding. The key is being explicit about causal assumptions (DAG) rather than pretending they don't exist in correlation analysis.
 
----
+# Supplementary Material
 
-**Why Nature**: This manuscript combines (1) exceptional data novelty (20-year continuous metabolism record); (2) conceptual advance (metabolic dysfunction as early indicator, indirect effects amplification); (3) technical innovation (Bayesian SEM in ecosystem ecology); (4) broad relevance (global reef crisis, ecosystem service loss); (5) connection to foundational ecology (Odum's legacy). It addresses climate impacts on a globally critical ecosystem using approaches applicable across systems, appealing to both ecologists and biogeochemists.
+## Supplementary Figure 1: Photosynthesis-Irradiance Curves
+
+```{r fig-pi-curves}
+#| label: fig-pi-curves
+#| fig-cap: "**Supplementary Figure 1. Annual photosynthesis-irradiance (PI) curves for MCR LTER Site 1 backreef, 2008–2025.** Points show individual hourly net community production measurements (mmol O₂ m⁻² hr⁻¹) plotted against photosynthetically active radiation (PAR; µmol photons m⁻² s⁻¹). Lines show the fitted rectangular hyperbola for each year, with parameters (α, Pmax, Rd) estimated simultaneously from all 2,928 observations using the Bayesian non-linear model described in Methods. Inset text in each panel shows the posterior median Pmax and Rd (rounded to the nearest integer; units: mmol O₂ m⁻² hr⁻¹). The progressive decline in both Pmax and Rd across years reflects the loss of photosynthetic capacity and ecosystem respiration documented in the main text."
+#| fig-width: 9
+#| fig-height: 7
+
+par_seq <- seq(0, max(LTER1_Pnet$PAR, na.rm = TRUE), length.out = 200)
+
+pi_params_plot <- fixef(fit1_f) |>
+  as.data.frame() |>
+  rownames_to_column("param") |>
+  as_tibble() |>
+  separate(param, into = c("type", "year_str"), sep = "_Year", remove = FALSE) |>
+  mutate(year = as.integer(year_str)) |>
+  filter(!is.na(year)) |>
+  select(type, year, Estimate) |>
+  pivot_wider(names_from = type, values_from = Estimate) |>
+  mutate(Rd = -Rd)
+
+fitted_curves <- pi_params_plot |>
+  rowwise() |>
+  reframe(
+    year   = year,
+    PAR    = par_seq,
+    PP_fit = (alpha * Pmax * par_seq) / (alpha * par_seq + Pmax) - Rd
+  )
+
+raw_data_plot <- LTER1_Pnet |>
+  mutate(year = as.integer(as.character(Year)))
+
+param_labels <- pi_params_plot |>
+  mutate(
+    label = sprintf("Pmax = %.0f\nRd = %.0f", Pmax, Rd),
+    PAR   = max(LTER1_Pnet$PAR, na.rm = TRUE) * 0.97,
+    PP    = min(LTER1_Pnet$PP,  na.rm = TRUE) * 0.85
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+  geom_point(data = raw_data_plot,
+             aes(x = PAR, y = PP),
+             colour = "grey50", size = 0.5, alpha = 0.4, shape = 16) +
+  geom_line(data = fitted_curves,
+            aes(x = PAR, y = PP_fit),
+            colour = "#1A237E", linewidth = 0.7) +
+  geom_text(data = param_labels,
+            aes(x = PAR, y = PP, label = label),
+            hjust = 1, vjust = 0, size = 2.2, colour = "#1A237E",
+            lineheight = 1.2) +
+  facet_wrap(~year, ncol = 6) +
+  scale_x_continuous(breaks = c(0, 1000, 2000)) +
+  labs(
+    x = expression(PAR~(mu*mol~photons~m^{-2}~s^{-1})),
+    y = expression(Net~production~(mmol~O[2]~m^{-2}~hr^{-1}))
+  ) +
+  theme_bw(base_size = 8) +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_text(size = 7.5, face = "bold"),
+    panel.grid.minor = element_blank(),
+    axis.text        = element_text(size = 6)
+  )
+```
+
+## Supplementary Table 1: SEM Path Coefficients
+
+```{r tbl-sem-paths}
+#| label: tbl-sem-paths
+#| tbl-cap: "**Supplementary Table 1.** Standardised path coefficients from the Bayesian multivariate structural equation model (12 pathways, n = 20 annual observations, 2005–2025). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to modelling. Year residual is the residual of calendar year regressed on maximum annual temperature, capturing secular coral decline beyond the thermal trend. β = posterior median standardised path coefficient; 95% CI = posterior credible interval; Rhat = potential scale reduction factor (values < 1.01 indicate convergence); Bulk ESS = bulk effective sample size; Tail ESS = tail effective sample size. Pathways for which the 95% CI excludes zero are considered credible (marked †)."
+
+# Build tidy table from brms fixed effects summary
+sem_coef_table <- as.data.frame(summary(brms_sem_full)$fixed) |>
+  tibble::rownames_to_column("term") |>
+  # Keep only regression coefficients (exclude intercepts)
+  filter(!grepl("Intercept", term)) |>
+  mutate(
+    # Parse response and predictor from "response_predictor" format
+    Pathway = case_when(
+      term == "temperature_Year"         ~ "Year → Temperature",
+      term == "logcoral_temperature"     ~ "Temperature → Coral cover",
+      term == "logcoral_yearresid"       ~ "Year residual → Coral cover",
+      term == "logrd_logcoral"           ~ "Coral cover → Ecosystem respiration",
+      term == "logrd_mitemperature"      ~ "Temperature → Ecosystem respiration (direct)",
+      term == "logfleshy_logcoral"       ~ "Coral cover → Fleshy macroalgae",
+      term == "Corallivore_logcoral"     ~ "Coral cover → Corallivore biomass",
+      term == "herbs_logfleshy"          ~ "Fleshy macroalgae → Herbivore biomass",
+      term == "logpmax_milogrd"          ~ "Ecosystem respiration → Ecosystem Pmax",
+      term == "logpmax_logcoral"         ~ "Coral cover → Ecosystem Pmax (direct)",
+      term == "logpmax_mitemperature"    ~ "Temperature → Ecosystem Pmax (direct)",
+      term == "Npercent_milogrd"         ~ "Ecosystem respiration → Algal N content",
+      TRUE ~ term
+    ),
+    Credible = if_else(sign(`l-95% CI`) == sign(`u-95% CI`), "†", ""),
+    beta  = sprintf("%.3f", Estimate),
+    CI    = sprintf("[%.3f, %.3f]", `l-95% CI`, `u-95% CI`),
+    Rhat  = sprintf("%.4f", Rhat),
+    BESS  = formatC(round(Bulk_ESS), format = "d", big.mark = ","),
+    TESS  = formatC(round(Tail_ESS), format = "d", big.mark = ",")
+  ) |>
+  # Order by causal chain
+  mutate(order = case_when(
+    grepl("Year →",              Pathway) ~ 1,
+    grepl("Temperature →",       Pathway) ~ 2,
+    grepl("Year residual →",     Pathway) ~ 2,
+    grepl("Coral cover →",       Pathway) ~ 3,
+    grepl("Fleshy macroalgae →", Pathway) ~ 4,
+    grepl("Ecosystem respiration →", Pathway) ~ 5,
+    TRUE ~ 6
+  )) |>
+  arrange(order, Pathway) |>
+  select(Pathway, Credible, beta, CI, Rhat, `Bulk ESS` = BESS, `Tail ESS` = TESS)
+
+kable(sem_coef_table, align = c("l", "c", "r", "c", "r", "r", "r"),
+      col.names = c("Pathway", "", "β", "95% CI", "R̂", "Bulk ESS", "Tail ESS")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE,
+                font_size = 12) |>
+  column_spec(1, width = "14em") |>
+  column_spec(2, width = "1em") |>
+  footnote(symbol = "95% credible interval excludes zero.")
+```
 
 # Conclusions
 

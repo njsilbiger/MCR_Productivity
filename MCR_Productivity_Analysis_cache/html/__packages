@@ -24,3 +24,12 @@ ggcorrplot2
 ggraph
 igraph
 emojifont
+sysfonts
+showtextdb
+showtext
+kableExtra
+httr2
+zoo
+slider
+glue
+cowplot
