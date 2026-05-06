@@ -538,21 +538,17 @@ Total standardised effects of temperature on each ecosystem variable were decomp
 
 ## Ecosystem Projections
 
-### Linear-trend projections
-
-Ecosystem trajectories were projected to 2055 by propagating 3,000 thinned posterior draws from the fitted reduced SEM through the full causal chain, year by year. For each draw, the expected value of every ecosystem variable was computed analytically using the SEM linear predictors (posterior conditional mean), without adding residual noise. The `yearresid` predictor used observed z-scaled values for observed years (2005–2025) and zero for forecast years (2026–2055), which assumes future non-thermal deviations average out. Back-transformed cover values were capped at 100% using the z-log ceiling constants throughout.
-
 ### CMIP6 climate scenario projections (to 2100)
 
-To project ecosystem trajectories under realistic climate forcing, monthly sea surface temperature (*tos*) for the Moorea grid cell (~17.5°S, 149.8°W) was obtained from ten coupled CMIP6 ScenarioMIP models — ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, and UKESM1-0-LL (Eyring et al. 2016) — downloaded from the Copernicus Climate Data Store (`projections-cmip6` dataset; Copernicus Climate Change Service 2021) for 2015–2100 under three Shared Socioeconomic Pathways: SSP1-2.6 (strong mitigation, ~1.5–2°C global warming by 2100), SSP2-4.5 (intermediate stabilisation), and SSP5-8.5 (high emissions, ~4–5°C warming; O'Neill et al. 2016; Riahi et al. 2017). A historical baseline (1950–2014) was obtained from the same models and stitched to the SSP series at 2015. Monthly *tos* values were aggregated to annual maxima per model-year, and ensemble p10, median, and p90 quantiles were computed across models for each scenario-year.
+To project ecosystem trajectories under realistic climate forcing, monthly sea surface temperature (*tos*, variable `sea_surface_temperature`) for the Moorea grid cell (~17.5°S, 149.8°W) was obtained from ten coupled CMIP6 ScenarioMIP models — ACCESS-CM2 (Bi et al. 2020), BCC-CSM2-MR (Wu et al. 2019), EC-Earth3 (Döscher et al. 2022), GFDL-ESM4 (Dunne et al. 2020), IPSL-CM6A-LR (Boucher et al. 2020), MIROC6 (Tatebe et al. 2019), MPI-ESM1-2-LR (Müller et al. 2018), MRI-ESM2-0 (Yukimoto et al. 2019), NorESM2-LM (Seland et al. 2020), and UKESM1-0-LL (Sellar et al. 2019) (Eyring et al. 2016) — downloaded from the Copernicus Climate Data Store (`projections-cmip6` dataset; Copernicus Climate Change Service 2023; https://cds.climate.copernicus.eu/datasets/projections-cmip6; DOI: 10.24381/cds.c866074c) via the **ecmwfr** R package (Hufkens et al. 2019; https://bluegreen-labs.github.io/ecmwfr/). Data were requested for 2015–2100 under three Shared Socioeconomic Pathways: SSP1-2.6 (strong mitigation, ~1.5–2°C global warming by 2100), SSP2-4.5 (intermediate stabilisation), and SSP5-8.5 (high emissions, ~4–5°C warming; O'Neill et al. 2016; Riahi et al. 2017). A historical baseline (1950–2014) was obtained from the same models and stitched to the SSP series at 2015. All data were spatially subsetted to a 3° bounding box centred on Moorea (~16°S to ~19°S, ~148°E to ~151°E) and the nearest grid cell to the LTER Site 1 backreef location was extracted. Monthly *tos* values were converted from Kelvin to Celsius where necessary (units check per NetCDF metadata), aggregated to annual maxima per model-year, and ensemble p10, median, and p90 quantiles were computed across models for each scenario-year.
 
-Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment.
+Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment. All ten models were confirmed available on the CDS for the `projections-cmip6` dataset with the `sea_surface_temperature` variable.
 
-Z-scored temperatures were propagated through the fitted reduced SEM for each of nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). The inner uncertainty ribbon on projection figures represents the SEM posterior 95% credible interval using the ensemble median temperature; the outer ribbon represents the CMIP6 multi-model p10–p90 spread at the SEM posterior median, thereby separating climate-forcing uncertainty from model-parameter uncertainty.
+Projections used a two-phase approach. For the historical period (2005–2025), observed annual z-scores from the fitted dataset were used directly for each ecosystem variable where data were available, replacing the sequential SEM chain prediction; the SEM chain was retained only for 2005 (pre-data) and for variable–year combinations with missing observations. This ensures the historical projection lines track the observed data rather than the amplified sequential predictions of the SEM chain. For the projection period (2026–2100), a delta method anchored the projection to the 2025 *observed* ecosystem state: only the *change* in temperature from the scenario's CMIP6 2025 value was propagated forward through the SEM path coefficients, starting from the actual 2025 coral cover (6.8%), ecosystem respiration (28.5 mmol O₂ m⁻² hr⁻¹), fleshy macroalgae (14.7%), and Pmax (113.3 mmol O₂ m⁻² hr⁻¹). Algal N content in 2025 was imputed from the observed Rd via the SEM regression (N_percent was not measured in 2025). This approach was used for all nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). The inner uncertainty ribbon on projection figures represents the SEM posterior 95% credible interval using the ensemble median temperature; the outer ribbon represents the CMIP6 multi-model p10–p90 spread at the SEM posterior median, thereby separating climate-forcing uncertainty from model-parameter uncertainty. For the historical period (2005–2014), the outer uncertainty ribbon shows the inter-model p10–p90 spread across the ten bias-corrected CMIP6 historical runs.
 
 ## Software and Reproducibility
 
-Key packages: **tidyverse** 2.0 (Wickham et al. 2019), **brms** 2.21 (Bürkner 2017), **tidybayes** 3.0 (Kay 2023), **patchwork** 1.2 (Pedersen 2024), **ggraph** 2.1 and **igraph** 1.6 (Csárdi & Nepusz 2006), **httr2** (Wickham 2023), **zoo** (Zeileis & Grothendieck 2005), **cowplot** (Wilke 2024). Stan 2.32 served as the computational backend. All analysis code and processed data are available at [repository DOI]; MCR LTER raw data are publicly archived through the EDI Data Portal.
+Key packages: **tidyverse** 2.0 (Wickham et al. 2019), **brms** 2.21 (Bürkner 2017), **tidybayes** 3.0 (Kay 2023), **patchwork** 1.2 (Pedersen 2024), **ggraph** 2.1 and **igraph** 1.6 (Csárdi & Nepusz 2006), **httr2** (Wickham 2023), **zoo** (Zeileis & Grothendieck 2005), **cowplot** (Wilke 2024), **ecmwfr** (Hufkens et al. 2019; https://bluegreen-labs.github.io/ecmwfr/), **ncdf4** (Pierce 2024). Stan 2.32 served as the computational backend. CMIP6 SST data were accessed from the Copernicus Climate Data Store (https://cds.climate.copernicus.eu/datasets/projections-cmip6; DOI: 10.24381/cds.c866074c). All analysis code and processed data are available at \[**INSERT REPOSITORY DOI**\]; MCR LTER raw data are publicly archived through the EDI Data Portal (https://edirepository.org).
 
 ---
 
@@ -875,10 +871,10 @@ ggsave(
 
 ```{r correlations}
 #| label: fig-correlations
-#| fig-cap: "Correlations among ecosystem variables"
+#| eval: false
+#| include: false
+#| fig-cap: "**Pairwise Pearson correlations among major reef ecosystem variables at MCR LTER Site 1 backreef, 2005–2025.** Upper triangle: ellipses scaled and oriented by Pearson correlation coefficient (r); narrow horizontal ellipses indicate strong positive correlation, narrow vertical ellipses indicate strong negative correlation. Lower triangle: numeric r values. Diagonal: variable names. Asterisks denote significance thresholds from two-tailed t-tests (* p < 0.05, ** p < 0.01, *** p < 0.001; no correction for multiple comparisons). Variables are ordered by hierarchical clustering of the correlation matrix. NP = annual mean net community production (mmol O₂ m⁻² hr⁻¹); Rd = ecosystem dark respiration; Pmax = maximum photosynthetic capacity; %N = algal tissue nitrogen content; N+N = water-column nitrite + nitrate concentration (µmol L⁻¹); % Coral = coral cover; % Algae = fleshy macroalgae cover; Herbs/eroder = herbivorous and bioeroding fish biomass (g m⁻²); Corallivore = corallivore fish biomass; Max Temp = annual maximum sea surface temperature (°C). n = 15–21 year-pairs depending on variable availability."
 #| fig-width: 10
-#| fig-height: 10
-
 # Compute correlation matrix
 ct <- corr.test(
   Year_Averages |>
@@ -1125,7 +1121,7 @@ ggplot() +
 
 ```{r sem-paths}
 #| label: fig-sem-paths
-#| fig-cap: "Standardized effect sizes from structural equation model"
+#| fig-cap: "**Standardised path coefficients from the Bayesian multivariate structural equation model.** Each panel corresponds to one response variable in the SEM; the x-axis shows the standardised effect size (β) and the y-axis shows the predictor(s) for that response. Points indicate posterior medians; horizontal bars span 95% credible intervals. Filled red symbols (full opacity) indicate paths whose 95% credible interval excludes zero; faded symbols indicate inconclusive paths (interval crosses zero). All variables were z-score standardised prior to modelling, so β values are directly comparable across panels as standard-deviation-per-standard-deviation effects. Coefficients are derived from 15,000 post-warmup MCMC draws of the full 12-pathway SEM (n = 15–21 annual observations, 2005–2025, depending on variable). Temperature and Ecosystem Rd Rate panels show imputed-predictor coefficients (mi() terms in brms) for years with missing observations."
 #| fig-width: 16
 #| fig-height: 6
 
@@ -1153,7 +1149,6 @@ gp_edges <- as_tibble(fixef(brms_sem_full)) |>
   mutate(pred = case_when(
     pred == "temperature" ~ "Temperature",
     pred == "mitemperature" ~ "Temperature",
-    pred == "logproducers" ~ "Total Producer Cover",
     pred == "milogrd" ~ "Ecosystem Rd Rate",
     pred == "logcoral" ~ "Coral Cover",
     pred == "logfleshy" ~ "Fleshy Macroalgae Cover",
@@ -1161,8 +1156,8 @@ gp_edges <- as_tibble(fixef(brms_sem_full)) |>
     pred == "yearresid" ~ "Non-Temperature Yearly Variability"
   )) |>
   mutate(pred = factor(pred, c(
-    "Ecosystem Rd Rate", "Total Producer Cover",
-    "Fleshy Macroalgae Cover", "Coral Cover", "Non-Temperature Yearly Variability",
+    "Ecosystem Rd Rate", "Fleshy Macroalgae Cover",
+    "Coral Cover", "Non-Temperature Yearly Variability",
     "Temperature", "Year"
   )))
 
@@ -1171,7 +1166,7 @@ gp_edges |>
   geom_point(size = 3, color = "firebrick", aes(alpha = sig)) +
   geom_errorbarh(aes(xmin = lo, xmax = hi, alpha = sig), height = 0, color = "firebrick") +
   geom_vline(xintercept = 0) +
-  scale_alpha(range = c(0.25, 1)) +
+  scale_alpha(range = c(0.6, 1)) +
   labs(
     x = "Standardized Effect Size",
     y = "Predictor Variables",
@@ -1189,187 +1184,68 @@ gp_edges |>
 
 ## Temperature Effects: Direct vs Indirect
 
-Calculate the total, direct, and indirect effects of temperature on all ecosystem responses.
-
-```{r temp-effects}
-#| label: fig-temp-effects
-#| fig-cap: "**Temperature effects on reef ecosystem variables are dominated by indirect pathways mediated through coral decline.** Direct, indirect (coral-mediated), and total standardised temperature effects on six ecosystem variables, estimated by decomposing posterior samples from the Bayesian SEM (15,000 post-warmup draws). Points show posterior medians; horizontal error bars show 95% credible intervals. Filled symbols indicate effects whose credible intervals exclude zero; open symbols are inconclusive. Indirect effects were computed as the product of β(Temperature→Coral) × β(Coral→Response) for each posterior draw; total effects are the sum of direct and indirect components. Variables are grouped by ecosystem domain (community composition vs. ecosystem function). Note the consistent pattern of credible indirect effects alongside inconclusive direct effects, indicating that temperature acts on reef function primarily via structural coral loss rather than direct physiological warming."
-#| fig-width: 10
-#| fig-height: 8
+```{r temp-effects-data}
+#| label: temp-effects-data
+#| echo: false
+#| message: false
+#| warning: false
 #| cache: true
 
-# Extract posterior samples for path coefficients
+# ── Compute direct and indirect temperature effects from SEM posteriors ────────
+# post_samples: 15,000 post-warmup draws from the full SEM
 post_samples <- as_tibble(as.matrix(brms_sem_full))
 
-# Calculate indirect effects of temperature through coral cover
-# Temperature -> Coral -> [Response]
+# Individual path coefficient draws
+b_tc  <- post_samples$b_logcoral_temperature       # Temp → Coral (direct)
+b_cr  <- post_samples$b_logrd_logcoral             # Coral → Rd
+b_cf  <- post_samples$b_logfleshy_logcoral         # Coral → Fleshy
+b_cc  <- post_samples$b_Corallivore_logcoral       # Coral → Corallivore Fish
+b_cp  <- post_samples$b_logpmax_logcoral           # Coral → Pmax
+b_fh  <- post_samples$b_herbs_logfleshy            # Fleshy → Herbivore Fish
+b_rn  <- post_samples$bsp_Npercent_milogrd         # Rd → N Content
+b_tr  <- post_samples$bsp_logrd_mitemperature      # Temp → Rd (direct)
+b_tp  <- post_samples$bsp_logpmax_mitemperature    # Temp → Pmax (direct)
 
-# Direct effects (already in the model)
-# Temperature -> Coral
-temp_to_coral <- post_samples$b_logcoral_temperature
+n_draws <- nrow(post_samples)
+zeros   <- rep(0, n_draws)
 
-# Temperature -> Pmax
-temp_to_pmax <- post_samples$bsp_logpmax_mitemperature
-
-# Temperature -> Rd
-temp_to_rd <- post_samples$bsp_logrd_mitemperature
-
-# Indirect effects through coral
-# Coral -> Pmax
-coral_to_pmax <- post_samples$b_logpmax_logcoral
-
-# Coral -> Rd
-coral_to_rd <- post_samples$b_logrd_logcoral
-
-# Coral -> Fleshy Algae
-coral_to_fleshy <- post_samples$b_logfleshy_logcoral
-
-# Coral -> Corallivores
-coral_to_corallivore <- post_samples$b_Corallivore_logcoral
-
-# Fleshy Algae -> Herbivores
-fleshy_to_herbs <- post_samples$b_herbs_logfleshy
-
-# Rd -> N content
-rd_to_n <- post_samples$bsp_Npercent_milogrd
-
-# Calculate total and indirect effects
-effects_data <- tibble(
-  # Coral (direct only)
-  response = c("Coral Cover", "Coral Cover",
-               # Pmax (direct + indirect through coral)
-               "Ecosystem Pmax", "Ecosystem Pmax",
-               # Rd (direct + indirect through coral)
-               "Ecosystem Rd", "Ecosystem Rd",
-               # Fleshy Algae (indirect through coral)
-               "Fleshy Macroalgae", "Fleshy Macroalgae",
-               # Corallivores (indirect through coral)
-               "Corallivore Fish", "Corallivore Fish",
-               # Herbivores (indirect through coral -> algae)
-               "Herbivore Fish", "Herbivore Fish",
-               # N content (indirect through coral -> Rd)
-               "N Content", "N Content"),
-  
-  effect_type = rep(c("Direct", "Indirect"), 7),
-  
-  samples = list(
-    # Coral
-    temp_to_coral,  # Direct
-    rep(0, length(temp_to_coral)),  # No indirect (coral is first response)
-    
-    # Pmax
-    temp_to_pmax,  # Direct
-    temp_to_coral * coral_to_pmax,  # Indirect: Temp -> Coral -> Pmax
-    
-    # Rd
-    temp_to_rd,  # Direct
-    temp_to_coral * coral_to_rd,  # Indirect: Temp -> Coral -> Rd
-    
-    # Fleshy Algae
-    rep(0, length(temp_to_coral)),  # No direct effect
-    temp_to_coral * coral_to_fleshy,  # Indirect: Temp -> Coral -> Algae
-    
-    # Corallivores
-    rep(0, length(temp_to_coral)),  # No direct effect
-    temp_to_coral * coral_to_corallivore,  # Indirect: Temp -> Coral -> Corallivore
-    
-    # Herbivores
-    rep(0, length(temp_to_coral)),  # No direct effect
-    temp_to_coral * coral_to_fleshy * fleshy_to_herbs,  # Indirect: Temp -> Coral -> Algae -> Herbs
-    
-    # N content
-    rep(0, length(temp_to_coral)),  # No direct effect
-    temp_to_coral * coral_to_rd * rd_to_n  # Indirect: Temp -> Coral -> Rd -> N
-  )
+# Direct, indirect, and total effects for each response variable
+effect_specs <- list(
+  `Coral Cover`       = list(direct = b_tc,   indirect = zeros),
+  `Ecosystem Rd`      = list(direct = b_tr,   indirect = b_tc * b_cr),
+  `Fleshy Macroalgae` = list(direct = zeros,  indirect = b_tc * b_cf),
+  `Corallivore Fish`  = list(direct = zeros,  indirect = b_tc * b_cc),
+  `Ecosystem Pmax`    = list(direct = b_tp,   indirect = b_tc * b_cp),
+  `Herbivore Fish`    = list(direct = zeros,  indirect = b_tc * b_cf * b_fh),
+  `N Content`         = list(direct = zeros,  indirect = b_tc * b_cr * b_rn)
 )
 
-# Calculate summary statistics for each effect
-effects_summary <- effects_data |>
-  mutate(
-    median = map_dbl(samples, median),
-    lower = map_dbl(samples, ~quantile(.x, 0.025)),
-    upper = map_dbl(samples, ~quantile(.x, 0.975)),
-    significant = map_lgl(samples, ~sign(quantile(.x, 0.025)) == sign(quantile(.x, 0.975)))
-  ) |>
-  mutate(response = factor(response, levels = c(
-    "Coral Cover", "Fleshy Macroalgae", "Herbivore Fish",
-    "Corallivore Fish", "Ecosystem Rd", "Ecosystem Pmax", "N Content"
-  )))
-
-# Calculate total effects
-total_effects <- effects_summary |>
-  select(response, effect_type, samples) |>
-  pivot_wider(names_from = effect_type, values_from = samples) |>
-  mutate(Total = map2(Direct, Indirect, ~.x + .y)) |>
-  select(response, Total) |>
-  mutate(
-    effect_type = "Total",
-    median = map_dbl(Total, median),
-    lower = map_dbl(Total, ~quantile(.x, 0.025)),
-    upper = map_dbl(Total, ~quantile(.x, 0.975)),
-    significant = map_lgl(Total, ~sign(quantile(.x, 0.025)) == sign(quantile(.x, 0.975)))
-  ) |>
-  rename(samples = Total)
-
-# Combine all effects
-all_effects <- bind_rows(effects_summary, total_effects) |>
-  mutate(effect_type = factor(effect_type, levels = c("Direct", "Indirect", "Total")))
-
-# Create publication-quality plot
-all_effects |>
-  filter(effect_type != "Total") |>  # Show only direct and indirect for clarity
-  ggplot(aes(x = median, y = response, color = effect_type, shape = effect_type)) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
-  geom_pointrange(
-    aes(xmin = lower, xmax = upper, alpha = significant),
-    position = position_dodge(width = 0.5),
-    size = 0.8,
-    linewidth = 1
-  ) +
-  scale_color_manual(
-    values = c("Direct" = "#E64B35", "Indirect" = "#4DBBD5"),
-    name = "Effect Type"
-  ) +
-  scale_shape_manual(
-    values = c("Direct" = 16, "Indirect" = 17),
-    name = "Effect Type"
-  ) +
-  scale_alpha_manual(
-    values = c("TRUE" = 1, "FALSE" = 0.4),
-    guide = "none"
-  ) +
-  labs(
-    x = "Standardized Effect Size",
-    y = "",
-    title = "Temperature Effects on Ecosystem Components",
-    subtitle = "Direct effects and indirect effects mediated through coral decline"
-  ) +
-  theme_minimal() +
-  theme(
-    text = element_text(size = 14),
-    axis.text.y = element_text(size = 13),
-    axis.text.x = element_text(size = 12),
-    axis.title.x = element_text(size = 14, margin = margin(t = 10)),
-    legend.position = "bottom",
-    legend.title = element_text(size = 13),
-    legend.text = element_text(size = 12),
-    panel.grid.minor = element_blank(),
-    plot.title = element_text(size = 16, face = "bold"),
-    plot.subtitle = element_text(size = 12, color = "gray40")
+summarise_effect <- function(samps) {
+  tibble(
+    samples     = list(samps),
+    median      = median(samps),
+    lower       = quantile(samps, 0.025),
+    upper       = quantile(samps, 0.975),
+    significant = sign(quantile(samps, 0.025)) == sign(quantile(samps, 0.975))
   )
+}
 
-# Print summary table
-cat("\n=== Temperature Effects Summary ===\n\n")
-all_effects |>
-  select(response, effect_type, median, lower, upper, significant) |>
-  mutate(across(median:upper, ~round(.x, 3))) |>
-  arrange(response, effect_type) |>
-  print(n = Inf)
+all_effects <- imap_dfr(effect_specs, function(spec, resp_name) {
+  bind_rows(
+    summarise_effect(spec$direct)               |> mutate(response = resp_name, effect_type = "Direct"),
+    summarise_effect(spec$indirect)             |> mutate(response = resp_name, effect_type = "Indirect"),
+    summarise_effect(spec$direct + spec$indirect) |> mutate(response = resp_name, effect_type = "Total")
+  )
+}) |>
+  mutate(
+    response    = factor(response,    levels = names(effect_specs)),
+    effect_type = factor(effect_type, levels = c("Direct", "Indirect", "Total"))
+  )
 ```
 
 ```{r temp-indirect-ranking}
 #| label: fig-temp-indirect
-#| fig-cap: "Ranking of indirect temperature effects on ecosystem components"
+#| fig-cap: "**Coral-mediated indirect effects of temperature warming on reef ecosystem components.** Horizontal bars show the posterior median standardised indirect effect of annual maximum sea surface temperature on each ecosystem variable, transmitted entirely through coral cover loss (β_indirect = β(Temperature→Coral) × β(Coral→Response)). Error bars span 95% credible intervals derived from 15,000 post-warmup MCMC draws of the full Bayesian SEM. Blue bars indicate positive indirect effects (temperature → coral decline → increase in response variable); red bars indicate negative indirect effects (temperature → coral decline → decrease in response variable). Opacity distinguishes credible effects (95% CI excludes zero; full opacity) from inconclusive effects (CI crosses zero; faded). Variables are ranked from most negative to most positive indirect effect. All variables were z-score standardised prior to modelling; effect sizes are in units of standard deviations of the response per standard deviation of temperature."
 #| fig-width: 8
 #| fig-height: 6
 
@@ -1643,15 +1519,12 @@ z_ceil_coral  <- 3.39   # (log(100) - mean(log(coral%))) / sd(log(coral%))
 z_ceil_fleshy <- 2.26   # (log(100) - mean(log(fleshy%))) / sd(log(fleshy%))
 ```
 
-### Linear-Trend Projections to 2055
-
-See *Methods: Ecosystem Projections* for full specification. Projections are summarised as posterior median with 50% and 95% credible intervals; observed 2005–2025 values are shown for comparison; the forecast period (2026–2055) is shaded grey.
-
-```{r predictions}
-#| label: fig-predictions
-#| fig-cap: "**Bayesian SEM projections of reef ecosystem state at MCR LTER Site 1 backreef to 2055.** Projections are derived by propagating 3,000 posterior draws through the full causal chain of the fitted SEM. Lines show posterior median trajectories; inner ribbons show 50% credible intervals; outer ribbons show 95% credible intervals. Open diamonds are annual observed values. The dashed vertical line marks 2025 (end of the observational record); the grey-shaded region is the forecast period. Panels show (A) maximum annual sea surface temperature (°C), (B) coral cover (%), (C) ecosystem dark respiration Rd (mmol O₂ m⁻² hr⁻¹), (D) fleshy macroalgae cover (%), (E) ecosystem maximum photosynthetic capacity Pmax (mmol O₂ m⁻² hr⁻¹), (F) algal tissue N content (%), and (G) ecosystem P:R ratio (Pmax / Rd). Uncertainty widens with projection distance, particularly for fleshy macroalgae and P:R ratio, reflecting compounding uncertainty propagated through multiple causal links. Projections assume continuation of current linear warming trends and do not incorporate non-linear threshold dynamics."
-#| fig-width: 8
-#| fig-height: 11
+```{r full-sem-proj-data}
+#| label: full-sem-proj-data
+#| echo: false
+#| message: false
+#| warning: false
+# Compute full-SEM projection matrices — needed by the reduced SEM comparison plot.
 
 # ── Projection years (standardised to SEM scale) ─────────────────────────────
 proj_years <- 2005:2055
@@ -1757,63 +1630,7 @@ obs_proj <- Year_Averages |>
             `N Content`    = N_percent,
             `P:R Ratio`    = Pmax / Rd) |>
   pivot_longer(-Year, names_to = "variable", values_to = "observed")
-
-# ── Panel specs ───────────────────────────────────────────────────────────────
-panel_spec <- tribble(
-  ~variable,      ~panel, ~ylab,                                    ~col,       ~ylo,  ~yhi,
-  "Temperature",  "A",    "Max. temperature (°C)",                  "#E65100",  28.5,  32.5,
-  "Coral Cover",  "B",    "Coral cover (%)",                        "#2E7D32",   0,    25,
-  "Respiration",  "C",    "Ecosystem Rd\n(mmol O₂ m⁻² hr⁻¹)",     "#4527A0",   0,    80,
-  "Fleshy Algae", "D",    "Fleshy macroalgae (%)",                  "#827717",   0,    80,
-  "Pmax",         "E",    "Ecosystem Pmax\n(mmol O₂ m⁻² hr⁻¹)",   "#0D47A1",  60,   170,
-  "N Content",    "F",    "Algal N content (%)",                    "#BF360C",   0.3,   1.0,
-  "P:R Ratio",    "G",    "P:R ratio\n(Pmax / Rd)",                 "#00695C",   1.5,   7.0
-)
-
-make_proj_panel <- function(variable, panel, ylab, col, ylo, yhi) {
-  dat <- proj_tbl   |> filter(variable == !!variable)
-  raw <- obs_proj   |> filter(variable == !!variable)
-  ggplot(dat, aes(x = Year)) +
-    annotate("rect", xmin = 2025.5, xmax = 2056, ymin = -Inf, ymax = Inf,
-             fill = "grey92") +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = col, alpha = 0.18) +
-    geom_ribbon(aes(ymin = lo50, ymax = hi50), fill = col, alpha = 0.30) +
-    geom_line(aes(y = median), color = col, linewidth = 0.9) +
-    geom_point(data = raw, aes(y = observed),
-               shape = 21, size = 1.7, color = col, fill = "white", stroke = 0.8) +
-    geom_vline(xintercept = 2025.5, linetype = "dashed",
-               color = "grey45", linewidth = 0.45) +
-    scale_x_continuous(breaks = seq(2005, 2055, 10)) +
-    coord_cartesian(ylim = c(ylo, yhi)) +
-    labs(y = ylab, x = NULL,
-         title = paste0(panel, ". ", variable)) +
-    theme_classic(base_size = 10) +
-    theme(plot.title   = element_text(size = 9.5, face = "bold", color = col),
-          axis.text.x  = element_text(angle = 30, hjust = 1, size = 8),
-          axis.title.y = element_text(size = 8))
-}
-
-panels <- pmap(panel_spec, make_proj_panel)
-
-wrap_plots(panels, ncol = 2) +
-  plot_annotation(
-    caption = paste("Grey shading = forecast (post-2025)  ·",
-                    "Inner ribbon = 50% CI  ·  Outer ribbon = 95% CI  ·",
-                    "Points = observed annual values  ·",
-                    "P:R ratio = Pmax / Rd (ratio of gross photosynthesis to respiration)"),
-    theme = theme(plot.caption = element_text(size = 8, color = "grey50", hjust = 0.5))
-  )
 ```
-
-### Results: Linear-Trend Projections
-
-Projections indicate continued, broad-front ecosystem degradation under current warming trends (Fig. @fig-predictions). Maximum annual sea surface temperature is projected to reach 30.3°C (95% CI 29.7–30.9) by 2035 and 30.8°C (29.9–31.8) by 2050, an increase of approximately +0.9°C above the 2025 model estimate of 29.9°C. Coral cover, currently estimated at 7.1% (4.4–10.8%), is projected to decline to 5.4% (2.4–9.8%) by 2035 and 3.5% (0.9–9.1%) by 2050 — representing a further 50% reduction from the already-depleted 2025 level. Credible intervals on coral cover widen considerably with projection distance, reflecting compounded uncertainty propagated through the Year → Temperature → Coral causal pathway.
-
-Driven by projected coral decline, ecosystem respiration is projected to fall from 35.6 mmol O₂ m⁻² hr⁻¹ (28.9–43.6) in 2025 to 29.9 (16.7–46.1) by 2050, though widening uncertainty means the direction of change after 2035 is less certain than the 2005–2025 observed decline. Fleshy macroalgae cover shows the widest credible intervals of any projected variable, expanding from 17.6% (10.4–32.1%) in 2025 to a posterior median of 39.6% by 2050 with very wide bounds (12.8–80%+), reflecting accumulated uncertainty along the multi-step coral → algae → herbivore chain. Maximum photosynthetic capacity (Pmax) shows comparatively stable projections — declining modestly from 115 (101–130) to 107 (75–141) mmol O₂ m⁻² hr⁻¹ — consistent with the weaker and partially offset direct and indirect temperature effects on Pmax identified in the SEM. Algal tissue N content is projected to decline slowly from 0.65% (0.56–0.74%) in 2025 to 0.60% (0.42–0.75%) by 2050, tracking declining respiration through the Rd → N pathway. The ecosystem P:R ratio (Pmax / Rd), which rose sharply from 2.3 (2005) to 4.0 (2025) as respiration collapsed faster than photosynthetic capacity, is projected to stabilise around 3.5 post-2025 with widening credible intervals (2.7–5.3 by 2050), reflecting compounded uncertainty from both Pmax and Rd trajectories.
-
-### Interpretation: Linear-Trend Projections
-
-Three features of the projections warrant particular ecological attention. First, the divergence between coral cover and Pmax trajectories is notable: coral continues to decline steeply while Pmax remains relatively stable, suggesting that photosynthetic capacity is increasingly decoupled from live coral structure — potentially reflecting expanding macroalgal and turf contributions to gross photosynthesis. Second, the very wide credible intervals on fleshy macroalgae beyond 2035 highlight that the macroalgal trajectory is the most uncertain element of the forecast; the log-normal model does not impose a ceiling on algal expansion, and actual dynamics may be constrained by herbivory, nutrient limitation, or disturbance. Third, the ecosystem P:R ratio (Pmax / Rd) rose sharply from a posterior median of 2.3 in 2005 to 4.0 in 2025 as ecosystem respiration collapsed far more rapidly than photosynthetic capacity — a trajectory from heterotrophy-dominated to autotrophy-dominated metabolism consistent with reef degradation. Post-2025, both Pmax and Rd are projected to stabilise at reduced levels; the P:R ratio is accordingly projected to remain elevated (~3.5) but shows widening uncertainty, reflecting the compounding of Pmax and Rd uncertainties. The observed P:R range over 2005–2025 (1.8–4.1) confirms that the regime shift in metabolic balance occurred largely within the observational record. Taken together, the projections suggest that without intervention, MCR Site 1 backreef will be characterised by sub-4% coral cover, elevated macroalgae, depressed respiration, and weakened internal nutrient cycling by mid-century.
 
 ## Reduced SEM: Parsimonious Model
 
@@ -1924,6 +1741,10 @@ proj_tbl_r <- imap_dfr(proj_list_r, function(mat, vname) {
 })
 
 # ── Counterfactual: temperature stabilised at 2025 ────────────────────────────
+# temp_2025_std: z-standardised 2025 annual maximum temperature
+# = (observed 2025 max temp - SEM temperature mean) / SEM temperature SD
+temp_2025_std <- (Year_Averages$Max_temp[Year_Averages$Year == 2025] -
+                    modelmean$temperature) / modelsd$temperature
 temp_mat_r_cf <- temp_mat_r
 temp_mat_r_cf[, which(proj_years > 2025)] <- temp_2025_std
 
@@ -1955,77 +1776,6 @@ proj_tbl_r_cf <- imap_dfr(
   })
 
 ```
-
-```{r fig-reduced-projections}
-#| label: fig-reduced-proj
-#| fig-cap: "**Reduced SEM projections (9 pathways), 2005–2055.** Three non-significant pathways from the full SEM were removed: direct temperature effects on ecosystem respiration (β = 0.22, 95% CI −0.22–0.62), direct temperature effects on Pmax (β = −0.16, −0.78–0.45), and direct coral effects on Pmax (β = −0.35, −1.40–0.71). Solid lines and ribbons show reduced SEM posterior median with 50% (inner) and 95% (outer) credible intervals. Dashed lines show the full SEM posterior median for comparison. Open points are annual observed values. Grey shading = forecast period (post-2025). The transient increase in Rd and N content at 2026–2035 reflects the yearresid = 0 forecast assumption: in 2025, the observed non-thermal decline (yearresid) was strongly suppressing coral below its temperature-driven expectation; releasing this suppression in the forecast temporarily allows partial coral and Rd recovery before continued temperature-driven decline resumes."
-#| fig-width: 8
-#| fig-height: 11
-
-# Observed data with P:R
-obs_proj_r <- Year_Averages |>
-  transmute(Year, Temperature = Max_temp, `Coral Cover` = mean_coral,
-            Respiration = Rd, `Fleshy Algae` = mean_fleshy, Pmax = Pmax,
-            `N Content` = N_percent, `P:R Ratio` = Pmax / Rd) |>
-  pivot_longer(-Year, names_to = "variable", values_to = "observed")
-
-# Full SEM with P:R for overlay
-proj_tbl_full_pr <- bind_rows(
-  proj_tbl,
-  proj_tbl |> filter(variable == "Pmax") |>
-    left_join(proj_tbl |> filter(variable == "Respiration") |> select(Year, rd_med = median), by = "Year") |>
-    mutate(variable = "P:R Ratio", across(c(median,lo95,hi95,lo50,hi50), ~ .x / rd_med)) |>
-    select(-rd_med)
-)
-
-panel_spec_r <- tribble(
-  ~variable,      ~panel, ~ylab,                                    ~col,       ~ylo,  ~yhi,
-  "Temperature",  "A",    "Max. temperature (°C)",                  "#E65100",  28.5,  32.5,
-  "Coral Cover",  "B",    "Coral cover (%)",                        "#2E7D32",   0,    25,
-  "Respiration",  "C",    "Ecosystem Rd\n(mmol O₂ m⁻² hr⁻¹)",     "#4527A0",   0,    80,
-  "Fleshy Algae", "D",    "Fleshy macroalgae (%)",                  "#827717",   0,    80,
-  "Pmax",         "E",    "Ecosystem Pmax\n(mmol O₂ m⁻² hr⁻¹)",   "#0D47A1",  60,   170,
-  "N Content",    "F",    "Algal N content (%)",                    "#BF360C",   0.3,   1.0,
-  "P:R Ratio",    "G",    "P:R ratio (Pmax / Rd)",                  "#00695C",   1.5,   7.0
-)
-
-make_reduced_panel <- function(variable, panel, ylab, col, ylo, yhi) {
-  dat_r    <- proj_tbl_r         |> filter(variable == !!variable)
-  dat_full <- proj_tbl_full_pr   |> filter(variable == !!variable)
-  raw      <- obs_proj_r         |> filter(variable == !!variable)
-  
-  ggplot(dat_r, aes(x = Year)) +
-    annotate("rect", xmin = 2025.5, xmax = 2056, ymin = -Inf, ymax = Inf, fill = "grey92") +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = col, alpha = 0.18) +
-    geom_ribbon(aes(ymin = lo50, ymax = hi50), fill = col, alpha = 0.30) +
-    geom_line(aes(y = median), color = col, linewidth = 0.9) +
-    geom_line(data = dat_full, aes(y = median),
-              color = col, linewidth = 0.5, linetype = "dashed", alpha = 0.55) +
-    geom_point(data = raw, aes(y = observed),
-               shape = 21, size = 1.7, color = col, fill = "white", stroke = 0.8) +
-    geom_vline(xintercept = 2025.5, linetype = "dashed", color = "grey45", linewidth = 0.45) +
-    scale_x_continuous(breaks = seq(2005, 2055, 10)) +
-    coord_cartesian(ylim = c(ylo, yhi)) +
-    labs(y = ylab, x = NULL, title = paste0(panel, ". ", variable)) +
-    theme_classic(base_size = 10) +
-    theme(plot.title   = element_text(size = 9.5, face = "bold", color = col),
-          axis.text.x  = element_text(angle = 30, hjust = 1, size = 8),
-          axis.title.y = element_text(size = 8))
-}
-
-panels_r <- pmap(panel_spec_r, make_reduced_panel)
-
-wrap_plots(panels_r, ncol = 2) +
-  plot_annotation(
-    caption = paste("Solid = reduced SEM (9 pathways)  ·  Dashed = full SEM (12 pathways)",
-                    "·  Inner ribbon = 50% CI  ·  Outer = 95% CI  ·  Points = observed"),
-    theme = theme(plot.caption = element_text(size = 8, color = "grey50", hjust = 0.5))
-  )
-```
-
-The reduced model retains essentially the same R² for temperature (0.214 vs. 0.216), coral (0.713), and fleshy algae (0.817 vs. 0.816), with modest reductions for respiration (0.620 vs. 0.659) and Pmax (0.375 vs. 0.400) — the expected cost of removing three predictors. All nine retained pathway coefficients are stable relative to the full model (within 0.02 SD of each other; see Supplementary Table 1). The `Rd → Pmax` pathway tightens substantially (β = 0.61, 95% CI 0.19–1.05 vs. 0.81, 0.04–1.63 in the full model), because the competing temperature and coral terms were absorbing residual Pmax variance and inflating uncertainty.
-
-In the reduced model projections, ecosystem respiration declines from 26.5 mmol O₂ m⁻² hr⁻¹ in 2025 to 27.1 (16.7–36.3) by 2050 — a modest net decline compared to the full model's flat or slightly increasing trajectory (30.0 mmol). A transient rebound in Rd is apparent in 2026–2035 (Fig. @fig-reduced-proj, panel C), driven by the yearresid mechanism: in 2025, the observed non-thermal secular decline (yearresid = +1.57 SD) was strongly suppressing coral below its temperature-expected level; setting yearresid = 0 in the forecast releases this suppression and allows a partial coral and Rd recovery before rising temperatures resume the downward trend by the mid-2030s. This transient is a forecast assumption artefact rather than an ecological prediction — if the non-thermal decline drivers persist beyond 2025, coral and Rd would not rebound. Pmax credible intervals narrow meaningfully (95% CI 82–119 vs. 74–137 mmol O₂ m⁻² hr⁻¹), reflecting better-constrained downstream propagation.
 
 ## Copernicus CDS CMIP6 SST Projections to 2100
 
@@ -2256,46 +2006,114 @@ ann_cmip6_bc <- ann_tos_bc |>
 #| label: wb-cmip6-propagate
 
 # ── Propagate each SSP scenario × CMIP6 percentile through the reduced SEM ───
+# Approach: two-phase projection anchored to the 2025 OBSERVED ecosystem state.
+#   Phase 1 (2005–2025): observed z-scores from semdata2 used directly where
+#     available, overriding the SEM chain prediction column-by-column. This
+#     ensures the historical lines track the actual data rather than the
+#     amplified sequential prediction. 2005 (not in semdata2) uses SEM prediction.
+#   Phase 2 (2026–2100): delta method. Only the CHANGE in temperature from the
+#     scenario's CMIP6 2025 value is propagated through the SEM path coefficients,
+#     starting from the 2025 observed ecosystem state. This preserves the real
+#     2025 coral, fleshy algae, and metabolism values as the projection origin.
+
+# ── Observed z-score lookup (built once, reused across all propagation calls) ──
+obs_anchors <- semdata2 |>
+  mutate(Year_actual = round(Year * modelsd$Year + modelmean$Year)) |>
+  select(Year_actual, logcoral, logrd, logfleshy, logpmax, Npercent, yearresid)
+
 propagate_wb_ssp <- function(scenario_name, pct = "median") {
+  # ── CMIP6 temperatures, z-scored, 2005–2100 (96 values) ──────────────────
   temps_bc <- wb_proj_bc |>
     filter(scenario == scenario_name, percentile == pct) |>
     arrange(year) |>
     pull(tasmax_bc)
 
   temp_z <- (temps_bc - modelmean$temperature) / modelsd$temperature
-  tm     <- matrix(rep(temp_z, each = n_r), nrow = n_r)
 
-  yr_rv <- sapply(2005:2100, function(y) {
+  n_hist <- 21L; n_proj <- 75L
+
+  # ── Phase 1: SEM chain (fallback values for years/variables missing obs) ──
+  temp_z_hist <- temp_z[seq_len(n_hist)]
+  tm_hist <- matrix(rep(temp_z_hist, each = n_r), nrow = n_r)
+
+  yr_rv_hist <- sapply(2005:2025, function(y) {
     row <- yr_resid_lookup |> filter(Year == y)
-    if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+    if (nrow(row) == 1L && !is.na(row$yr)) row$yr else 0
   })
-  yrm <- matrix(rep(yr_rv, each = n_r), nrow = n_r)
+  yrm_hist <- matrix(rep(yr_rv_hist, each = n_r), nrow = n_r)
 
-  cm <- pmin(rs(post_r$b_logcoral_temperature, tm) +
-             rs(post_r$b_logcoral_yearresid,   yrm) + post_r$b_logcoral_Intercept, z_ceil_coral)
-  rm <- rs(post_r$b_logrd_logcoral, cm)         + post_r$b_logrd_Intercept
-  fm <- pmin(rs(post_r$b_logfleshy_logcoral, cm) + post_r$b_logfleshy_Intercept, z_ceil_fleshy)
-  pm <- rs(post_r$bsp_logpmax_milogrd, rm)      + post_r$b_logpmax_Intercept
-  nm <- rs(post_r$bsp_Npercent_milogrd, rm)     + post_r$b_Npercent_Intercept
+  cm_hist <- pmin(rs(post_r$b_logcoral_temperature, tm_hist) +
+                  rs(post_r$b_logcoral_yearresid,   yrm_hist) +
+                  post_r$b_logcoral_Intercept,  z_ceil_coral)
+  rm_hist <- rs(post_r$b_logrd_logcoral,          cm_hist) + post_r$b_logrd_Intercept
+  fm_hist <- pmin(rs(post_r$b_logfleshy_logcoral, cm_hist) +
+                  post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm_hist <- rs(post_r$bsp_logpmax_milogrd,  rm_hist) + post_r$b_logpmax_Intercept
+  nm_hist <- rs(post_r$bsp_Npercent_milogrd, rm_hist) + post_r$b_Npercent_Intercept
+
+  # ── Override historical columns with observed z-scores where available ────
+  obs_z <- function(y, col) {
+    row <- obs_anchors |> filter(Year_actual == y)
+    if (nrow(row) == 0L) return(NA_real_)
+    v <- row[[col]][[1L]]
+    if (is.na(v)) NA_real_ else v
+  }
+
+  for (j in 2:n_hist) {          # j = 1 → 2005 (not in semdata2, keep SEM)
+    y <- 2004L + j
+    oc <- obs_z(y, "logcoral");  if (!is.na(oc)) cm_hist[, j] <- oc
+    or <- obs_z(y, "logrd");     if (!is.na(or)) rm_hist[, j] <- or
+    of <- obs_z(y, "logfleshy"); if (!is.na(of)) fm_hist[, j] <- of
+    op <- obs_z(y, "logpmax");   if (!is.na(op)) pm_hist[, j] <- op
+    on <- obs_z(y, "Npercent");  if (!is.na(on)) nm_hist[, j] <- on
+  }
+
+  # ── 2025 observed anchor (scalar per variable) ────────────────────────────
+  z25 <- obs_anchors |> filter(Year_actual == 2025L) |> slice(1)
+  c25 <- z25$logcoral
+  r25 <- z25$logrd
+  f25 <- z25$logfleshy
+  p25 <- z25$logpmax
+  # N_percent NA in 2025: impute from observed Rd via SEM median
+  n25 <- median(post_r$bsp_Npercent_milogrd * r25 + post_r$b_Npercent_Intercept)
+
+  # ── Phase 2 (2026–2100): delta from 2025 observed anchor ─────────────────
+  temp_z_2025 <- temp_z[n_hist]
+  delta_temp  <- temp_z[(n_hist + 1L):(n_hist + n_proj)] - temp_z_2025
+  dtm         <- matrix(rep(delta_temp, each = n_r), nrow = n_r)  # n_r × n_proj
+
+  cm_proj <- pmin(c25 + rs(post_r$b_logcoral_temperature, dtm), z_ceil_coral)
+  dcm     <- cm_proj - c25
+  rm_proj <- r25 + rs(post_r$b_logrd_logcoral,          dcm)
+  fm_proj <- pmin(f25 + rs(post_r$b_logfleshy_logcoral, dcm), z_ceil_fleshy)
+  drm     <- rm_proj - r25
+  pm_proj <- p25 + rs(post_r$bsp_logpmax_milogrd,  drm)
+  nm_proj <- n25 + rs(post_r$bsp_Npercent_milogrd, drm)
+
+  # ── Combine & back-transform ──────────────────────────────────────────────
+  tm <- matrix(rep(temp_z, each = n_r), nrow = n_r)
+  cm <- cbind(cm_hist, cm_proj);  rm <- cbind(rm_hist, rm_proj)
+  fm <- cbind(fm_hist, fm_proj);  pm <- cbind(pm_hist, pm_proj)
+  nm <- cbind(nm_hist, nm_proj)
 
   imap_dfr(
     list(Temperature    = bt_lin(tm, modelmean$temperature, modelsd$temperature),
-         `Coral Cover`  = bt_log(cm, modelmean$logcoral,   modelsd$logcoral),
-         Respiration    = bt_log(rm, modelmean$logrd,      modelsd$logrd),
-         `Fleshy Algae` = bt_log(fm, modelmean$logfleshy,  modelsd$logfleshy),
-         Pmax           = bt_log(pm, modelmean$logpmax,    modelsd$logpmax),
+         `Coral Cover`  = bt_log(cm, modelmean$logcoral,    modelsd$logcoral),
+         Respiration    = bt_log(rm, modelmean$logrd,       modelsd$logrd),
+         `Fleshy Algae` = bt_log(fm, modelmean$logfleshy,   modelsd$logfleshy),
+         Pmax           = bt_log(pm, modelmean$logpmax,     modelsd$logpmax),
          `N Content`    = bt_log(nm,
-                                 mean(log(Year_Averages$N_percent), na.rm = TRUE),
-                                 sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
+                                  mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                                  sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
     function(mat, vname) {
       tibble(scenario = scenario_name, percentile = pct, variable = vname,
              year = rep(2005:2100, each = n_r), value = as.vector(mat)) |>
         group_by(scenario, percentile, variable, year) |>
         summarise(median = median(value, na.rm = TRUE),
-                  lo95 = quantile(value, .025, na.rm = TRUE),
-                  hi95 = quantile(value, .975, na.rm = TRUE),
-                  lo50 = quantile(value, .25,  na.rm = TRUE),
-                  hi50 = quantile(value, .75,  na.rm = TRUE),
+                  lo95   = quantile(value, .025, na.rm = TRUE),
+                  hi95   = quantile(value, .975, na.rm = TRUE),
+                  lo50   = quantile(value, .25,  na.rm = TRUE),
+                  hi50   = quantile(value, .75,  na.rm = TRUE),
                   .groups = "drop")
     })
 }
@@ -2338,9 +2156,10 @@ wb_plot_tbl <- wb_sem_ci_band |>
   mutate(variable       = factor(variable, levels = wb_var_order),
          scenario_label = wb_ssp_labels[scenario])
 
-# ── Patch: historical temperature spread from Open-Meteo 7-model ensemble ─────
-# The WorldBank historical series has no p10/p90; substitute the inter-model
-# spread (p10–p90 across 7 bias-corrected HighResMIP models) for 2005–2014.
+# ── Historical temperature spread: inter-model p10/p90 across CDS CMIP6 ensemble ─
+# For 2005-2014 (historical period), the SSP ensemble spread is not defined;
+# use the CMIP6 historical run inter-model spread (p10–p90 across 10 bias-corrected
+# CDS CMIP6 models) to fill the outer uncertainty ribbon for the Temperature panel.
 om_hist_spread <- ann_cmip6_bc |>
   filter(year %in% 2005:2014) |>
   group_by(year) |>
@@ -2361,7 +2180,7 @@ wb_plot_tbl <- wb_plot_tbl |>
 
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
-#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. Inner ribbons: 95% credible interval from the SEM posterior (3,000 draws; CMIP6 ensemble median SST). Outer ribbons (temperature panel): CMIP6 multi-model p10–p90 spread. Open circles: observed 2005–2025 values. Grey shading: forecast period. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond observed range)."
+#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. **Historical period (2005–2025, unshaded):** lines show observed annual ecosystem state, derived directly from the MCR LTER dataset; open circles mark the same values for emphasis. **Projection period (2026–2100, grey shading):** lines show the SEM posterior median; inner ribbons show the 95% credible interval (3,000 posterior draws, CMIP6 ensemble median SST); outer ribbons show the CMIP6 multi-model p10–p90 climate spread at the SEM posterior median, separating parameter uncertainty from forcing uncertainty. The temperature panel retains both ribbon types throughout the full record. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
 #| fig-width: 9
 #| fig-height: 8
 
@@ -2389,11 +2208,24 @@ make_wb_panel <- function(vname) {
   unit <- wb_var_units[[vname]]
   ylim <- wb_y_limits[[vname]]
 
+  # Ribbons only in the projection period (2026+), where uncertainty is meaningful.
+  # For temperature, the outer (climate) ribbon also shows the CMIP6 model spread
+  # in the historical period (outer ribbon is valid there).
+  # For other variables, ribbons in 2005-2025 are artefacts: 2005 uses the SEM
+  # chain (very wide), observed years collapse to zero width, and the outer ribbon
+  # is inverted for variables with a negative temperature relationship.
+  d_ribbon       <- d_v |> filter(year > 2025)
+  d_clim_ribbon  <- if (vname == "Temperature") d_v else d_ribbon
+
   p <- ggplot(d_v, aes(x = year, colour = scenario, fill = scenario)) +
     annotate("rect", xmin = 2025.5, xmax = 2100, ymin = -Inf, ymax = Inf,
              fill = "grey92", alpha = .6) +
-    geom_ribbon(aes(ymin = lo_clim, ymax = hi_clim), alpha = 0.10, colour = NA) +
-    geom_ribbon(aes(ymin = lo_sem,  ymax = hi_sem),  alpha = 0.20, colour = NA) +
+    geom_ribbon(data = d_clim_ribbon,
+                aes(ymin = pmin(lo_clim, hi_clim), ymax = pmax(lo_clim, hi_clim)),
+                alpha = 0.10, colour = NA) +
+    geom_ribbon(data = d_ribbon,
+                aes(ymin = lo_sem, ymax = hi_sem),
+                alpha = 0.20, colour = NA) +
     geom_line(aes(y = central), linewidth = 0.7) +
     geom_point(data = obs_v, aes(x = year, y = obs),
                colour = "black", size = 1.5, shape = 21, fill = "white",
@@ -2458,18 +2290,6 @@ wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
 knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
 ```
 
-### Results: CMIP6 SST projections to 2100
-
-Extending the CMIP6 SST forcing to 2100 using a ten-model coupled ensemble from the Copernicus CDS under three SSPs reveals strong scenario dependence across all ecosystem variables (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6). By 2050, scenario differences are modest (coral cover: SSP1-2.6 5.8% vs. SSP5-8.5 4.2%), consistent with the narrow divergence between scenarios before mid-century. Post-2050, trajectories diverge sharply, particularly under SSP5-8.5.
-
-Under **SSP1-2.6** (aggressive mitigation), temperature stabilises near 30°C after mid-century, and coral cover stabilises at approximately 6% — near current (2025) levels — with no further long-term decline. Ecosystem respiration remains relatively stable at ~33 mmol O₂ m⁻² hr⁻¹, and fleshy algae stays bounded around 20–25% cover.
-
-Under **SSP5-8.5** (high-emissions), temperature reaches ~32°C by 2100, driving coral cover to 0.9% (95% CI: 0.3–2.8%) — effectively near-complete loss. Ecosystem respiration collapses to 16.6 mmol O₂ m⁻² hr⁻¹ (−71% from 2005 levels), and fleshy macroalgae expands beyond the 100% biological ceiling in the model's log-linear extrapolation, indicating a complete phase shift to algae dominance. The scenario contrast in coral cover at 2100 is approximately **7-fold** (6.2% vs. 0.9%), illustrating the substantial leverage of emissions trajectory on reef state.
-
-**SSP2-4.5** projects an intermediate outcome, with coral reaching 3.5% by 2100, respiration at 27.2 mmol, and fleshy algae ~39%, comparable to the linear-trend projection for 2050.
-
-Two caveats apply. First, the CMIP6 SST forcing is from coupled global models at ~1° resolution; the delta bias correction anchors each model's mean to the MCR observational record but cannot capture local oceanographic variability such as ENSO-driven anomalies or upwelling. Second, the log-linear SEM projects fleshy algae beyond physical limits (>100% cover) under extreme warming, an artefact of extrapolation beyond the observed range; these values should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
-
 # Results & Interpretation
 
 ## Results
@@ -2484,23 +2304,23 @@ Ecosystem respiration (Rd) declined markedly from a mean of 57 mmol O₂ m⁻² 
 
 ### Causal pathways through the reef ecosystem
 
-A Bayesian SEM encompassing eight response variables and 12 causal pathways revealed coral cover as the central mediator of ecosystem change (Fig. @fig-sem-dag, @fig-sem-conditional). Year was positively associated with temperature (β = 0.47, 95% CI 0.12–0.82), and temperature negatively drove coral cover (β = −0.55, 95% CI −0.83 to −0.28). A non-thermal temporal component — the residual of calendar year after removing the temperature trend — also credibly predicted coral cover (β = −0.67, 95% CI −0.93 to −0.41), capturing secular decline in coral cover unexplained by warming alone. Coral cover in turn was the strongest predictor of ecosystem respiration (β = 1.08, 95% CI 0.64–1.53), fleshy macroalgae (β = −0.91, 95% CI −1.13 to −0.70), and corallivore fish biomass (β = 0.65, 95% CI 0.26–1.02). Herbivore fish biomass was positively predicted by fleshy macroalgae cover (β = 0.71, 95% CI 0.37–1.06), consistent with bottom-up trophic control. Ecosystem respiration in turn predicted algal nitrogen content (β = 0.62, 95% CI 0.24–1.01) and Pmax (β = 0.82, 95% CI 0.03–1.62). Three tested pathways — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62) and Pmax (β = −0.16, 95% CI −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, 95% CI −1.40 to 0.71) — had credible intervals that included zero. Bayesian R² was 0.22 for temperature and 0.71 for coral cover (the year-residual predictor accounted for the large improvement from the prior R² of 0.29).
+A Bayesian SEM encompassing eight response variables and 12 causal pathways revealed coral cover as the central mediator of ecosystem change (Fig. @fig-sem-dag; path coefficients: Fig. @fig-sem-paths; conditional effects: Fig. @fig-sem-conditional). Year was positively associated with temperature (β = 0.47, 95% CI 0.12–0.82), and temperature negatively drove coral cover (β = −0.55, 95% CI −0.83 to −0.28). A non-thermal temporal component — the residual of calendar year after removing the temperature trend — also credibly predicted coral cover (β = −0.67, 95% CI −0.93 to −0.41), capturing secular decline in coral cover unexplained by warming alone. Coral cover in turn was the strongest predictor of ecosystem respiration (β = 1.08, 95% CI 0.64–1.53), fleshy macroalgae (β = −0.91, 95% CI −1.13 to −0.70), and corallivore fish biomass (β = 0.65, 95% CI 0.26–1.02). Herbivore fish biomass was positively predicted by fleshy macroalgae cover (β = 0.71, 95% CI 0.37–1.06), consistent with bottom-up trophic control. Ecosystem respiration in turn predicted algal nitrogen content (β = 0.62, 95% CI 0.24–1.01) and Pmax (β = 0.82, 95% CI 0.03–1.62). Three tested pathways — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62) and Pmax (β = −0.16, 95% CI −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, 95% CI −1.40 to 0.71) — had credible intervals that included zero. Bayesian R² was 0.22 for temperature and 0.71 for coral cover (the year-residual predictor accounted for the large improvement from the prior R² of 0.29).
 
 ### Temperature effects are predominantly indirect
 
-Decomposing total temperature effects into direct and coral-mediated indirect pathways (Fig. @fig-temp-effects) revealed that coral decline was the dominant transmission mechanism for most ecosystem responses. The indirect effect of temperature on ecosystem respiration, operating through coral loss, was substantial and directionally credible (β_indirect = −0.58, 95% CI −1.01 to −0.25), while the direct thermal effect was inconclusive (β_direct = 0.22, 95% CI −0.22 to 0.62), and the total effect did not exclude zero (β_total = −0.38, 95% CI −0.85 to 0.08). For Pmax, direct and indirect pathways partially cancelled and neither was significant (β_total = 0.03, 95% CI −0.54 to 0.64). All indirect temperature effects on fleshy macroalgae (β = +0.50, 95% CI 0.25–0.79), corallivore fish (β = −0.34, 95% CI −0.66 to −0.11), herbivore fish (β = +0.35, 95% CI 0.14–0.66), and algal nitrogen content (β = −0.35, 95% CI −0.76 to −0.10) were mediated entirely through coral cover and had credible intervals excluding zero.
+Decomposing total temperature effects into direct and coral-mediated indirect pathways revealed that coral decline was the dominant transmission mechanism for most ecosystem responses (Fig. @fig-temp-indirect). The indirect effect of temperature on ecosystem respiration, operating through coral loss, was substantial and directionally credible (β_indirect = −0.58, 95% CI −1.01 to −0.25), while the direct thermal effect was inconclusive (β_direct = 0.22, 95% CI −0.22 to 0.62), and the total effect did not exclude zero (β_total = −0.38, 95% CI −0.85 to 0.08). For Pmax, direct and indirect pathways partially cancelled and neither was significant (β_total = 0.03, 95% CI −0.54 to 0.64). All indirect temperature effects on fleshy macroalgae (β = +0.50, 95% CI 0.25–0.79), corallivore fish (β = −0.34, 95% CI −0.66 to −0.11), herbivore fish (β = +0.35, 95% CI 0.14–0.66), and algal nitrogen content (β = −0.35, 95% CI −0.76 to −0.10) were mediated entirely through coral cover and had credible intervals excluding zero.
 
 ### Ecosystem projections under CMIP6 climate scenarios
 
-Extending the SEM causal framework to 2100 using WorldBank CMIP6 temperature forcing under three SSP emission scenarios reveals strong dependence of reef ecosystem state on the trajectory of global emissions (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6).
+Extending the SEM causal framework to 2100 using Copernicus CDS CMIP6 SST forcing under three SSP emission scenarios reveals strong dependence of reef ecosystem state on the trajectory of global emissions (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6).
 
-**Near-term (to 2050).** Scenarios diverge only modestly before mid-century, consistent with similar temperature trajectories across SSPs prior to ~2040. Coral cover at 2050 is projected at 5.8% under SSP1-2.6 versus 4.2% under SSP5-8.5 — a relatively small contrast reflecting that near-term warming is largely committed regardless of emission pathway. Ecosystem respiration, fleshy macroalgae, Pmax, and N content show similarly narrow scenario separation at 2050.
+**Near-term (to 2050).** Scenarios diverge only modestly before mid-century, consistent with similar temperature trajectories across SSPs prior to ~2040. Coral cover at 2050 is projected at 5.1% under SSP1-2.6 versus 4.0% under SSP5-8.5 — a relatively small contrast reflecting that near-term warming is largely committed regardless of emission pathway. Ecosystem respiration, fleshy macroalgae, Pmax, and N content show similarly narrow scenario separation at 2050.
 
 **Mid-century (2050–2075).** Trajectories diverge sharply as scenario-dependent warming accumulates. Under SSP5-8.5, temperatures approach ~31°C by 2075, driving coral cover below 2% and ecosystem respiration below 22 mmol O₂ m⁻² hr⁻¹. Under SSP1-2.6, temperatures stabilise near 30–30.5°C following the emissions peak, and coral cover remains above 5%. SSP2-4.5 follows an intermediate trajectory, with coral declining slowly toward 4%.
 
-**End of century (2100).** The scenario contrast at 2100 is striking. Under SSP1-2.6, coral cover stabilises at 6.2% (posterior 95% CI: 2.4–14.3%), broadly near its 2025 level, while ecosystem respiration remains at 33 mmol O₂ m⁻² hr⁻¹ and fleshy macroalgae is held around 21% cover — a reef that is structurally degraded relative to 2005, but functionally persistent. Under SSP5-8.5, coral cover collapses to 0.9% (95% CI: 0.3–2.8%) — a 7-fold difference relative to SSP1-2.6. Ecosystem respiration falls to 16.6 mmol O₂ m⁻² hr⁻¹ (−71% relative to 2005 levels), and the fleshy macroalgae model extrapolates beyond the 100% biological ceiling, indicating an algae-dominated phase-shifted state. SSP2-4.5 projects an intermediate outcome: coral ~3.5% by 2100, respiration ~27 mmol O₂ m⁻² hr⁻¹, and fleshy algae ~39% — comparable to the linear-trend projection for 2050, illustrating that intermediate emissions postpone but do not prevent continued reef degradation.
+**End of century (2100).** The scenario contrast at 2100 is striking. Under SSP1-2.6, coral cover stabilises at 5.4% (posterior 95% CI: 4.8–6.1%), broadly near its 2025 level, while ecosystem respiration remains at 26.3 mmol O₂ m⁻² hr⁻¹ and fleshy macroalgae is held around 19% cover — a reef that is structurally degraded relative to 2005, but functionally persistent. Under SSP5-8.5, coral cover collapses to 0.9% (95% CI: 0.3–2.4%) — a ~6-fold difference relative to SSP1-2.6. Ecosystem respiration falls to 13.8 mmol O₂ m⁻² hr⁻¹ (−52% relative to 2025 levels), and the fleshy macroalgae model extrapolates beyond the 100% biological ceiling, indicating an algae-dominated phase-shifted state. Algal tissue nitrogen content, which tracks the respiration pathway through the SEM, declines from 0.57% in 2025 to 0.42% by 2100 under SSP5-8.5 (−26%), while remaining near 0.56% under SSP1-2.6 as metabolic rates stabilise with temperature. SSP2-4.5 projects an intermediate outcome: coral ~3.2% by 2100, respiration ~22 mmol O₂ m⁻² hr⁻¹, fleshy algae ~36%, and N content ~0.52%, illustrating that intermediate emissions postpone but do not prevent continued reef degradation.
 
-The ~2040–2060 window represents the critical divergence point, after which emission pathways commit the system to qualitatively different futures. The 7-fold contrast in coral cover at 2100 between SSP1-2.6 and SSP5-8.5 quantifies the ecological leverage of global emissions mitigation for reef persistence. Two caveats apply to these projections. First, the coupled-model SST forcing is at CMIP6 resolution (~1°); the delta bias correction captures the ensemble warming rate but not local oceanographic variability (e.g., ENSO anomalies, upwelling around Moorea). Second, the log-linear SEM extrapolates fleshy macroalgae beyond biological limits under SSP5-8.5, which should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
+The ~2040–2060 window represents the critical divergence point, after which emission pathways commit the system to qualitatively different futures. The ~6-fold contrast in coral cover at 2100 between SSP1-2.6 and SSP5-8.5 quantifies the ecological leverage of global emissions mitigation for reef persistence. Two caveats apply to these projections. First, the coupled-model SST forcing is at CMIP6 resolution (~1°); the delta bias correction captures the ensemble warming rate but not local oceanographic variability (e.g., ENSO anomalies, upwelling around Moorea). Second, the log-linear SEM extrapolates fleshy macroalgae beyond biological limits under SSP5-8.5, which should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
 
 # Discussion
 
@@ -2563,8 +2383,6 @@ Our results suggest that even reefs maintaining some coral cover experience func
 
 ## Coral as an Ecological Hub: Temperature Acts Through Structure
 
-**Coral as an ecological hub: why temperature acts through structure rather than physiology**
-
 The central finding of this analysis is that two decades of ocean warming have degraded reef ecosystem function primarily by dismantling coral structure, not by directly suppressing the physiology of individual organisms. Across every ecosystem variable we examined — respiration, photosynthesis, herbivory, corallivory, and nutrient cycling — the indirect temperature effect mediated through coral decline was either larger than, or the only credible component of, the total thermal signal. Direct temperature effects on ecosystem respiration (β = 0.22, 95% CI −0.21 to 0.62) and maximum photosynthetic capacity (β = −0.16, 95% CI −0.79 to 0.46) were both inconclusive, while their indirect counterparts (−0.58 and −0.19 respectively) were directionally credible. This pattern is not a statistical artefact: it reflects an ecological reality in which coral colonies function as keystone structures rather than just organisms. Coral provides physical framework, photosynthetic biomass, associated heterotrophic microbiomes, and three-dimensional habitat simultaneously; warming-induced bleaching and mortality therefore cascades across all of these pathways at once.
 
 This contrasts sharply with the more commonly invoked direct warming hypothesis, in which ocean temperature is expected to stimulate microbial and heterotrophic metabolism (as in terrestrial systems) or suppress photosynthesis through bleaching of individual symbionts. Our data do not rule out those mechanisms acting at sub-annual timescales, but at the decadal scale of community reorganisation, structural loss appears to be the dominant transmission pathway. Ecosystem respiration declined 49% over 20 years not because metabolic rate constants fell, but because the coral-associated heterotrophic biomass that drives reef respiration — corals, their endosymbionts, and associated microbial communities — was removed. The mechanism is closer to deforestation than to metabolic inhibition.
@@ -2585,7 +2403,7 @@ These trophic dynamics have practical management implications. The consistent do
 
 The MCR LTER Site 1 backreef trajectory is consistent with, but mechanistically more specific than, the global picture of reef decline. Widespread reductions in net community calcification (e.g., Albright et al. 2018; DeCarlo et al. 2017) and increasing heterotrophy (e.g., Kaneohe Bay; Shamberger et al. 2011) have been documented across ocean basins, but few studies have linked these to structural community change through an explicit causal framework. Our SEM results support a structural interpretation: metabolic decline tracks coral loss with a strong, credible path coefficient, whereas direct temperature effects are ambiguous. This suggests that the mechanistic driver of metabolic change at MCR is more closely analogous to the deforestation narrative than to the thermal inhibition narrative, with implications for projections: reef metabolism may recover if and when coral cover recovers, even if temperatures remain elevated.
 
-The CMIP6 SSP scenario projections extend this finding forward in time. The 7-fold contrast in coral cover at 2100 between SSP1-2.6 (~6%) and SSP5-8.5 (~1%) illustrates the degree to which emission trajectory controls long-term reef outcomes — a result consistent with global projections of mass coral bleaching frequency under high-emissions scenarios (Hoegh-Guldberg et al. 2018; Hughes et al. 2017). Critically, the scenarios remain indistinguishable in their reef consequences until approximately 2040–2050, implying that the next two decades of warming are largely committed regardless of mitigation effort. The divergence thereafter, however, highlights that aggressive emissions reduction remains the most effective lever for preserving reef function at the centennial timescale. The SSP1-2.6 projection — in which MCR coral cover stabilises near its 2025 level rather than collapsing further — represents the ecosystem consequence of achieving the Paris Agreement ~1.5–2°C target and provides an ecologically grounded argument for that policy goal.
+The CMIP6 SSP scenario projections extend this finding forward in time. The ~6-fold contrast in coral cover at 2100 between SSP1-2.6 (~5%) and SSP5-8.5 (~1%) illustrates the degree to which emission trajectory controls long-term reef outcomes — a result consistent with global projections of mass coral bleaching frequency under high-emissions scenarios (Hoegh-Guldberg et al. 2018; Hughes et al. 2017). Critically, the scenarios remain indistinguishable in their reef consequences until approximately 2040–2050, implying that the next two decades of warming are largely committed regardless of mitigation effort. The divergence thereafter, however, highlights that aggressive emissions reduction remains the most effective lever for preserving reef function at the centennial timescale. The SSP1-2.6 projection — in which MCR coral cover stabilises near its 2025 level rather than collapsing further — represents the ecosystem consequence of achieving the Paris Agreement ~1.5–2°C target and provides an ecologically grounded argument for that policy goal.
 
 ## Limitations and Future Directions
 
@@ -2601,7 +2419,7 @@ Future directions include cross-site SEM comparison across MCR LTER sites (forer
 
 **Conceptual contributions**: Odum's reef studies established foundational concepts in ecosystem ecology: (1) **P/R ratios as maturity indices** - mature systems approach metabolic balance; (2) **Nutrient spiraling** - efficient nutrient retention and recycling in oligotrophic environments; (3) **Trophic efficiency** - high biomass per unit energy flow through tight food web linkages; (4) **Ecosystem development** - progression from r-selected, high-net-production systems to K-selected, high-biomass systems. Coral reefs became the archetype of "climax" ecosystems optimized for stability rather than growth.
 
-**Contemporary decline**: Our MCR data reveal the reversal of Odum's trajectory. Where Eniwetok showed P/R ≈ 1 with high biomass and efficient nutrient cycling, MCR exhibits increasing P/R (from ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 1)` to ~`r round(mean(Year_Averages$P_R_ratio[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 1)`) driven by collapsing biomass (70% coral loss) and disproportionate loss of respiratory capacity, alongside disrupted nutrient dynamics (respiration-N coupling weakened). This represents **ecosystem retrogression**—the undoing of ecological development. The shift away from P/R ≈ 1 reflects loss of the tight metabolic balance that characterized mature coral reefs, replaced by metabolic imbalance where production persists but respiratory biomass is lost. Climate change is dismantling the metabolic paradigm Odum described, with coral reefs losing the very characteristics that made them foundational to ecosystem science. The MCR time series documents this transition in unprecedented detail, providing a metabolic obituary for a disappearing ecosystem type.
+**Contemporary decline**: Our MCR data reveal the reversal of Odum's trajectory. Where Eniwetok showed P/R ≈ 1 with high biomass and efficient nutrient cycling, MCR exhibits increasing P/R (from ~`r round(mean(Year_Averages$Pmax[Year_Averages$Year %in% 2008:2010] / Year_Averages$Rd[Year_Averages$Year %in% 2008:2010], na.rm = TRUE), 1)` to ~`r round(mean(Year_Averages$Pmax[Year_Averages$Year %in% 2023:2025] / Year_Averages$Rd[Year_Averages$Year %in% 2023:2025], na.rm = TRUE), 1)`) driven by collapsing biomass (70% coral loss) and disproportionate loss of respiratory capacity, alongside disrupted nutrient dynamics (respiration-N coupling weakened). This represents **ecosystem retrogression**—the undoing of ecological development. The shift away from P/R ≈ 1 reflects loss of the tight metabolic balance that characterized mature coral reefs, replaced by metabolic imbalance where production persists but respiratory biomass is lost. Climate change is dismantling the metabolic paradigm Odum described, with coral reefs losing the very characteristics that made them foundational to ecosystem science. The MCR time series documents this transition in unprecedented detail, providing a metabolic obituary for a disappearing ecosystem type.
 
 ## Box 2: Structural Equation Modelling for Causal Inference in Long-Term Ecology
 
@@ -2755,6 +2573,108 @@ Future research should focus on:
 -   Exploring fine-scale spatial heterogeneity in ecosystem responses
 
 The structural equation modeling approach employed here provides a framework for testing causal hypotheses and making projections, but predictions should be interpreted cautiously given the complexity of reef systems and potential for non-linear dynamics.
+
+# References
+
+## Climate Data and CMIP6 Models
+
+**Copernicus Climate Data Store**
+
+Copernicus Climate Change Service (C3S) (2023). CMIP6 climate projections. Copernicus Climate Change Service (C3S) Climate Data Store (CDS). https://cds.climate.copernicus.eu/datasets/projections-cmip6. DOI: 10.24381/cds.c866074c
+
+**CMIP6 Overview**
+
+Eyring, V., Bony, S., Meehl, G. A., Senior, C. A., Stevens, B., Stouffer, R. J., & Taylor, K. E. (2016). Overview of the Coupled Model Intercomparison Project Phase 6 (CMIP6) experimental design and organization. *Geoscientific Model Development*, 9(5), 1937–1958. https://doi.org/10.5194/gmd-9-1937-2016
+
+**SSP Scenarios**
+
+O'Neill, B. C., Tebaldi, C., van Vuuren, D. P., Eyring, V., Friedlingstein, P., Hurtt, G., Knutti, R., Kriegler, E., Lamarque, J.-F., Lowe, J., Meehl, G. A., Moss, R., Riahi, K., & Sanderson, B. M. (2016). The Scenario Model Intercomparison Project (ScenarioMIP) for CMIP6. *Geoscientific Model Development*, 9(9), 3461–3482. https://doi.org/10.5194/gmd-9-3461-2016
+
+Riahi, K., van Vuuren, D. P., Kriegler, E., Edmonds, J., O'Neill, B. C., Fujimori, S., Bauer, N., Calvin, K., Dellink, R., Fricko, O., Lutz, W., Popp, A., Cuaresma, J. C., Kc, S., Leimbach, M., Jiang, L., Kram, T., Rao, S., Emmerling, J., … Tavoni, M. (2017). The Shared Socioeconomic Pathways and their energy, land use, and greenhouse gas emissions implications: An overview. *Global Environmental Change*, 42, 153–168. https://doi.org/10.1016/j.gloenvch.2016.05.009
+
+**Individual CMIP6 Models**
+
+Bi, D., Dix, M., Marsland, S., O'Farrell, S., Sullivan, A., Bodman, R., Law, R., Harman, I., Srbinovsky, J., Rashid, H. A., Dobrohotoff, P., Mackallah, C., Yan, H., Hirst, A., Savita, A., Dias, F. B., Woodhouse, M., Fiedler, R., & Heerdegen, A. (2020). Configuration and spin-up of ACCESS-CM2, the new generation Australian Community Climate and Earth System Simulator Coupled Model. *Journal of Southern Hemisphere Earth Systems Science*, 70(1), 225–251. https://doi.org/10.1071/ES19040
+
+Boucher, O., Servonnat, J., Albright, A. L., Aumont, O., Balkanski, Y., Bastrikov, V., Bekki, S., Bonnet, R., Bony, S., Bopp, L., Braconnot, P., Brockmann, P., Cadule, P., Caubel, A., Cheruy, F., Codron, F., Cozic, A., Cugnet, D., D'Andrea, F., … Vuichard, N. (2020). Presentation and evaluation of the IPSL‐CM6A‐LR climate model. *Journal of Advances in Modeling Earth Systems*, 12(7), e2019MS002010. https://doi.org/10.1029/2019MS002010
+
+Döscher, R., Acosta, M., Alessandri, A., Anthoni, P., Arsouze, T., Bergman, T., Bernardello, R., Boussetta, S., Caron, L.-P., Carver, G., Castrillo, M., Catalano, F., Cvijanovic, I., Davini, P., Dekker, E., Doblas-Reyes, F. J., Docquier, D., Echevarria, P., Fladrich, U., … Zhang, Q. (2022). The EC-Earth3 Earth system model for the Coupled Model Intercomparison Project 6. *Geoscientific Model Development*, 15(7), 2973–3020. https://doi.org/10.5194/gmd-15-2973-2022
+
+Dunne, J. P., Horowitz, L. W., Adcroft, A. J., Ginoux, P., Held, I. M., John, J. G., Krasting, J. P., Malyshev, S., Naik, V., Paulot, F., Shevliakova, E., Stock, C. A., Zadeh, N., Balaji, V., Blanton, C., Dunne, K. A., Dupuis, C., Durachta, J., Dussin, R., … Zhao, M. (2020). The GFDL Earth System Model version 4.1 (GFDL‐ESM 4.1): Overall coupled model description and simulation characteristics. *Journal of Advances in Modeling Earth Systems*, 12(11), e2019MS002015. https://doi.org/10.1029/2019MS002015
+
+Müller, W. A., Jungclaus, J. H., Mauritsen, T., Baehr, J., Bittner, M., Budich, R., Bunzel, F., Esch, M., Ghosh, R., Haak, H., Ilyina, T., Kleine, T., Kornblueh, L., Li, H., Modali, K., Notz, D., Pohlmann, H., Segschneider, J., Tian, F., … Marotzke, J. (2018). A higher-resolution version of the Max Planck Institute Earth System Model (MPI‐ESM1.2‐HR). *Journal of Advances in Modeling Earth Systems*, 10(7), 1383–1413. https://doi.org/10.1029/2017MS001217
+
+Seland, Ø., Bentsen, M., Olivié, D., Toniazzo, T., Gjermundsen, A., Graff, L. S., Debernard, J. B., Gupta, A. K., He, Y.-C., Kirkevåg, A., Schwinger, J., Tjiputra, J., Aas, K. S., Bethke, I., Fan, Y., Griesfeller, J., Grini, A., Guo, C., Ilicak, M., … Schulz, M. (2020). Overview of the Norwegian Earth System Model (NorESM2) and key climate response of CMIP6 DECK and historical simulations. *Geoscientific Model Development*, 13(12), 6165–6200. https://doi.org/10.5194/gmd-13-6165-2020
+
+Sellar, A. A., Jones, C. G., Mulcahy, J. P., Tang, Y., Yool, A., Wiltshire, A., O'Connor, F. M., Stringer, M., Hill, R., Palmieri, J., Woodward, S., de Mora, L., Kuhlbrodt, T., Rumbold, S. T., Kelley, D. I., Ellis, R., Johnson, C. E., Walton, J., Abraham, N. L., … Zerroukat, M. (2019). UKESM1: Description and evaluation of the UK Earth System Model. *Journal of Advances in Modeling Earth Systems*, 11(12), 4513–4558. https://doi.org/10.1029/2019MS001739
+
+Tatebe, H., Ogura, T., Nitta, T., Komuro, Y., Ogochi, K., Takemura, T., Sudo, K., Sekiguchi, M., Abe, M., Saito, F., Chikira, M., Watanabe, S., Mori, M., Hirota, N., Kawatani, Y., Mochizuki, T., Yoshimura, K., Takata, K., O'ishi, R., … Kimoto, M. (2019). Description and basic evaluation of simulated mean state, internal variability, and climate sensitivity in MIROC6. *Geoscientific Model Development*, 12(7), 2727–2765. https://doi.org/10.5194/gmd-12-2727-2019
+
+Wu, T., Lu, Y., Fang, Y., Xin, X., Li, L., Li, W., Jie, W., Zhang, J., Liu, Y., Zhang, L., Zhang, F., Zhang, Y., Wu, F., Li, J., Chu, M., Wang, Z., Shi, X., Liu, X., Wei, M., … Zhou, W. (2019). The Beijing Climate Center Climate System Model (BCC‐CSM2): Main progress from CMIP5 to CMIP6. *Geoscientific Model Development*, 12(4), 1573–1600. https://doi.org/10.5194/gmd-12-1573-2019
+
+Yukimoto, S., Kawai, H., Koshiro, T., Oshima, N., Yoshida, K., Urakawa, S., Tsujino, H., Deushi, M., Tanaka, T., Hosaka, M., Yabu, S., Yoshimura, H., Shindo, E., Mizuta, R., Obata, A., Adachi, Y., & Ishii, M. (2019). The Meteorological Research Institute Earth System Model version 2.0, MRI‐ESM2.0: Description and basic evaluation of the physical component. *Journal of the Meteorological Society of Japan*, 97(5), 931–965. https://doi.org/10.2151/jmsj.2019-051
+
+---
+
+## Statistical Methods and Software
+
+Bürkner, P.-C. (2017). brms: An R package for Bayesian multilevel models using Stan. *Journal of Statistical Software*, 80(1), 1–28. https://doi.org/10.18637/jss.v080.i01
+
+Bürkner, P.-C. (2018). Advanced Bayesian multilevel modeling with the R package brms. *The R Journal*, 10(1), 395–411. https://doi.org/10.32614/RJ-2018-017
+
+Carpenter, B., Gelman, A., Hoffman, M. D., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M., Guo, J., Li, P., & Riddell, A. (2017). Stan: A probabilistic programming language. *Journal of Statistical Software*, 76(1), 1–32. https://doi.org/10.18637/jss.v076.i01
+
+Csárdi, G., & Nepusz, T. (2006). The igraph software package for complex network research. *InterJournal, Complex Systems*, 1695. https://igraph.org
+
+Gelman, A., Goodrich, B., Gabry, J., & Vehtari, A. (2019). R-squared for Bayesian regression models. *The American Statistician*, 73(3), 307–309. https://doi.org/10.1080/00031305.2018.1549100
+
+Hufkens, K., Stauffer, R., & Campitelli, E. (2019). ecmwfr: Programmatic interface to the two main European Centre for Medium-Range Weather Forecasts APIs. *Journal of Open Source Software*, 4(43), 1867. https://doi.org/10.21105/joss.01867
+
+Kay, M. (2023). tidybayes: Tidy data and 'Geoms' for Bayesian models. R package version 3.0.6. https://mjskay.github.io/tidybayes/
+
+Pedersen, T. L. (2024). patchwork: The composer of plots. R package version 1.2.0. https://patchwork.data-imaginist.com
+
+Pierce, D. (2024). ncdf4: Interface to Unidata netCDF (Version 4 or Earlier) Format Data Files. R package version 1.22. https://CRAN.R-project.org/package=ncdf4
+
+Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., François, R., Grolemund, G., Hayes, A., Henry, L., Hester, J., Kuhn, M., Pedersen, T. L., Miller, E., Bache, S. M., Müller, K., Ooms, J., Robinson, D., Seidel, D. P., Spinu, V., … Yutani, H. (2019). Welcome to the tidyverse. *Journal of Open Source Software*, 4(43), 1686. https://doi.org/10.21105/joss.01686
+
+Wilke, C. O. (2024). cowplot: Streamlined Plot Theme and Plot Annotations for 'ggplot2'. R package version 1.1.3. https://wilkelab.org/cowplot/
+
+Zeileis, A., & Grothendieck, G. (2005). zoo: S3 infrastructure for regular and irregular time series. *Journal of Statistical Software*, 14(6), 1–27. https://doi.org/10.18637/jss.v014.i06
+
+---
+
+## Reef Ecology and Ecosystem Metabolism
+
+Barnes, D. J. (1983). Profiling coral reef productivity and calcification using pH and oxygen electrodes. *Journal of Experimental Marine Biology and Ecology*, 66(2), 149–161. https://doi.org/10.1016/0022-0981(83)90036-0
+
+Courtney, T. A., Andersson, A. J., Bates, N. R., Collins, A., Doherty, S., Cooper, T. F., & Cyronak, T. (2016). Comparing chemistry and census-based estimates of net ecosystem calcification on a rim reef in Bermuda. *Frontiers in Marine Science*, 3, 181. https://doi.org/10.3389/fmars.2016.00181
+
+DeCarlo, T. M., Cohen, A. L., Barkley, H. C., Cobban, Q., Young, C., Shamberger, K. E., Brainard, R. E., & Golbuu, Y. (2017). Coral macrobioerosion is accelerated by ocean acidification and nutrients. *Geology*, 45(5), 399–402. https://doi.org/10.1130/G38737.1
+
+Hoegh-Guldberg, O., Poloczanska, E. S., Skirving, W., & Dove, S. (2017). Coral reef ecosystems under climate change and ocean acidification. *Frontiers in Marine Science*, 4, 158. https://doi.org/10.3389/fmars.2017.00158
+
+Hughes, T. P., Barnes, M. L., Bellwood, D. R., Cinner, J. E., Cumming, G. S., Jackson, J. B. C., Kleypas, J., van de Leemput, I. A., Lough, J. M., Morrison, T. H., Palumbi, S. R., van Nes, E. H., & Scheffer, M. (2017). Coral reefs in the Anthropocene. *Nature*, 546(7656), 82–90. https://doi.org/10.1038/nature22901
+
+Kinsey, D. W. (1985). Metabolism, calcification and carbon production. I. Systems level studies. In *Proceedings of the 5th International Coral Reef Congress* (Vol. 4, pp. 505–526). Antenne Museum-EPHE, Moorea.
+
+McMahon, A., Santos, I. R., Cyronak, T., & Eyre, B. D. (2013). Hysteresis between coral reef calcification and the seawater aragonite saturation state. *Geophysical Research Letters*, 40(15), 4090–4094. https://doi.org/10.1002/grl.50802
+
+Odum, H. T. (1956). Primary production in flowing waters. *Limnology and Oceanography*, 1(2), 102–117. https://doi.org/10.4319/lo.1956.1.2.0102
+
+Odum, E. P. (1969). The strategy of ecosystem development. *Science*, 164(3877), 262–270. https://doi.org/10.1126/science.164.3877.262
+
+Salinas-de-León, P., Dryden, C., & Costello, M. J. (2018). Characterisation of net ecosystem production in shallow tropical coral reef and seagrass ecosystems. *Marine Ecology Progress Series*, 590, 37–49. https://doi.org/10.3354/meps12471
+
+Santos, I. R., Glud, R. N., Maher, D., Erler, D., & Eyre, B. D. (2011). Diel coral reef acidification driven by porewater advection in permeable carbonate sands, Heron Island, Great Barrier Reef. *Geophysical Research Letters*, 38(3), L03604. https://doi.org/10.1029/2010GL046053
+
+Shamberger, K. E. F., Feely, R. A., Sabine, C. L., Atkinson, M. J., DeCarlo, E. H., Mackenzie, F. T., Drupp, P. S., & Butterfield, D. A. (2011). Calcification and organic production on a Hawaiian coral reef. *Marine Chemistry*, 127(1–4), 64–75. https://doi.org/10.1016/j.marchem.2011.08.003
+
+Shaw, E. C., McNeil, B. I., & Tilbrook, B. (2015). Chemistry and dynamics of the inorganic carbon species in an Australian coral reef. *Marine Chemistry*, 177(2), 194–207. https://doi.org/10.1016/j.marchem.2015.06.008
+
+Yeakel, K. L., Andersson, A. J., Bates, N. R., Courtney, T. A., & Houck, J. (2015). Shifts in coral reef biogeochemistry and resulting acidification linked to offshore productivity. *Proceedings of the National Academy of Sciences*, 112(47), 14512–14517. https://doi.org/10.1073/pnas.1507021112
+
+---
 
 # Session Information
 
