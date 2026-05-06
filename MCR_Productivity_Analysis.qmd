@@ -544,7 +544,7 @@ To project ecosystem trajectories under realistic climate forcing, monthly sea s
 
 Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment. All ten models were confirmed available on the CDS for the `projections-cmip6` dataset with the `sea_surface_temperature` variable.
 
-Projections used a two-phase approach. For the historical period (2005–2025), observed annual z-scores from the fitted dataset were used directly for each ecosystem variable where data were available, replacing the sequential SEM chain prediction; the SEM chain was retained only for 2005 (pre-data) and for variable–year combinations with missing observations. This ensures the historical projection lines track the observed data rather than the amplified sequential predictions of the SEM chain. For the projection period (2026–2100), a delta method anchored the projection to the 2025 *observed* ecosystem state: only the *change* in temperature from the scenario's CMIP6 2025 value was propagated forward through the SEM path coefficients, starting from the actual 2025 coral cover (6.8%), ecosystem respiration (28.5 mmol O₂ m⁻² hr⁻¹), fleshy macroalgae (14.7%), and Pmax (113.3 mmol O₂ m⁻² hr⁻¹). Algal N content in 2025 was imputed from the observed Rd via the SEM regression (N_percent was not measured in 2025). This approach was used for all nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). The inner uncertainty ribbon on projection figures represents the SEM posterior 95% credible interval using the ensemble median temperature; the outer ribbon represents the CMIP6 multi-model p10–p90 spread at the SEM posterior median, thereby separating climate-forcing uncertainty from model-parameter uncertainty. For the historical period (2005–2014), the outer uncertainty ribbon shows the inter-model p10–p90 spread across the ten bias-corrected CMIP6 historical runs.
+Projections used a two-phase approach. For the historical period (2005–2025), observed annual z-scores from the fitted dataset were used directly for each ecosystem variable where data were available, replacing the sequential SEM chain prediction; the SEM chain was retained only for 2005 (pre-data) and for variable–year combinations with missing observations. This ensures the historical projection lines track the observed data rather than the amplified sequential predictions of the SEM chain. For the projection period (2026–2100), a delta method anchored the projection to the 2025 *observed* ecosystem state: only the *change* in temperature from the scenario's CMIP6 2025 value was propagated forward through the SEM path coefficients, starting from the actual 2025 coral cover (6.8%), ecosystem respiration (28.5 mmol O₂ m⁻² hr⁻¹), fleshy macroalgae (14.7%), and Pmax (113.3 mmol O₂ m⁻² hr⁻¹). Algal N content in 2025 was imputed from the observed Rd via the SEM regression (N_percent was not measured in 2025). This approach was used for all nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). For the median-scenario runs used to construct inner uncertainty ribbons, each of the 3,000 posterior draws received an independent temperature perturbation sampled from the CMIP6 inter-model distribution at each projection year, approximated as Gaussian with standard deviation derived from the p10–p90 range (σ = (p90 − p10) / 2·Φ⁻¹(0.9)). Consequently, the inner ribbon integrates both SEM path-coefficient uncertainty and CMIP6 temperature forcing uncertainty. The outer ribbon, derived from fully deterministic p10 and p90 scenario runs at the posterior-median SEM parameters, provides a complementary view of climate forcing uncertainty decoupled from structural model uncertainty. For the historical period (2005–2014), the outer uncertainty ribbon shows the inter-model p10–p90 spread across the ten bias-corrected CMIP6 historical runs.
 
 ## Software and Reproducibility
 
@@ -2080,7 +2080,31 @@ propagate_wb_ssp <- function(scenario_name, pct = "median") {
   # ── Phase 2 (2026–2100): delta from 2025 observed anchor ─────────────────
   temp_z_2025 <- temp_z[n_hist]
   delta_temp  <- temp_z[(n_hist + 1L):(n_hist + n_proj)] - temp_z_2025
-  dtm         <- matrix(rep(delta_temp, each = n_r), nrow = n_r)  # n_r × n_proj
+
+  # For the median run: convolve CMIP6 inter-model spread into each posterior
+  # draw so the inner (SEM) ribbon captures both path-coefficient uncertainty
+  # and temperature forcing uncertainty.  The p10/p90 runs stay deterministic;
+  # they define the outer climate ribbon only.
+  if (pct == "median") {
+    temps_p10_proj <- wb_proj_bc |>
+      filter(scenario == scenario_name, percentile == "p10") |>
+      arrange(year) |> pull(tasmax_bc) |> tail(n_proj)
+    temps_p90_proj <- wb_proj_bc |>
+      filter(scenario == scenario_name, percentile == "p90") |>
+      arrange(year) |> pull(tasmax_bc) |> tail(n_proj)
+    # SD of inter-model spread converted to z-score units
+    sd_cmip6_z <- (temps_p90_proj - temps_p10_proj) /
+                  (2 * qnorm(0.9)) / modelsd$temperature
+    # Each of the n_r draws gets an independent temperature perturbation
+    noise_mat <- matrix(
+      rnorm(n_r * n_proj, mean = 0, sd = rep(sd_cmip6_z, each = n_r)),
+      nrow = n_r, byrow = FALSE
+    )
+    dtm <- matrix(rep(delta_temp, each = n_r), nrow = n_r) + noise_mat
+  } else {
+    dtm       <- matrix(rep(delta_temp, each = n_r), nrow = n_r)
+    noise_mat <- matrix(0, nrow = n_r, ncol = n_proj)
+  }
 
   cm_proj <- pmin(c25 + rs(post_r$b_logcoral_temperature, dtm), z_ceil_coral)
   dcm     <- cm_proj - c25
@@ -2091,7 +2115,12 @@ propagate_wb_ssp <- function(scenario_name, pct = "median") {
   nm_proj <- n25 + rs(post_r$bsp_Npercent_milogrd, drm)
 
   # ── Combine & back-transform ──────────────────────────────────────────────
-  tm <- matrix(rep(temp_z, each = n_r), nrow = n_r)
+  # Temperature: historical columns are deterministic; projection columns carry
+  # the per-draw noise so the Temperature panel shows the combined spread.
+  tm_proj_mat <- matrix(rep(temp_z[(n_hist + 1L):(n_hist + n_proj)], each = n_r),
+                        nrow = n_r) + noise_mat
+  tm <- cbind(matrix(rep(temp_z[seq_len(n_hist)], each = n_r), nrow = n_r),
+              tm_proj_mat)
   cm <- cbind(cm_hist, cm_proj);  rm <- cbind(rm_hist, rm_proj)
   fm <- cbind(fm_hist, fm_proj);  pm <- cbind(pm_hist, pm_proj)
   nm <- cbind(nm_hist, nm_proj)
@@ -2122,6 +2151,7 @@ wb_all_combos <- expand_grid(
   scenario   = c("ssp126", "ssp245", "ssp585"),
   percentile = c("p10", "median", "p90")
 )
+set.seed(6174)   # reproducible temperature perturbations across draws
 wb_proj_tbl <- bind_rows(
   mapply(propagate_wb_ssp,
          scenario_name = wb_all_combos$scenario,
@@ -2180,7 +2210,7 @@ wb_plot_tbl <- wb_plot_tbl |>
 
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
-#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. **Historical period (2005–2025, unshaded):** lines show observed annual ecosystem state, derived directly from the MCR LTER dataset; open circles mark the same values for emphasis. **Projection period (2026–2100, grey shading):** lines show the SEM posterior median; inner ribbons show the 95% credible interval (3,000 posterior draws, CMIP6 ensemble median SST); outer ribbons show the CMIP6 multi-model p10–p90 climate spread at the SEM posterior median, separating parameter uncertainty from forcing uncertainty. The temperature panel retains both ribbon types throughout the full record. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
+#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. **Historical period (2005–2025, unshaded):** lines show observed annual ecosystem state, derived directly from the MCR LTER dataset; open circles mark the same values for emphasis. **Projection period (2026–2100, grey shading):** lines show the SEM posterior median; inner ribbons show the combined 95% credible interval across 3,000 posterior draws, where each draw's CMIP6 temperature forcing is independently perturbed by a sample from the inter-model spread (approximated as Gaussian from the p10–p90 range), so the inner ribbon integrates both SEM path-coefficient uncertainty and CMIP6 forcing uncertainty; outer ribbons show the deterministic CMIP6 multi-model p10–p90 range at the posterior-median SEM parameters, providing an additional view of forcing uncertainty at fixed structural parameters. The temperature panel retains both ribbon types throughout the full record. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
 #| fig-width: 9
 #| fig-height: 8
 
@@ -2272,7 +2302,7 @@ cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.12))
 
 ```{r tbl-wb-cmip6}
 #| label: tbl-wb-cmip6
-#| tbl-cap: "CMIP6 SST ensemble projections at 2050, 2075, and 2100 under three SSP scenarios (reduced SEM, CMIP6 ensemble median SST). Values are posterior median (95% credible interval). Temperature CIs are negligible because the SEM does not add uncertainty to the input forcing. Fleshy Algae values >100% under SSP5-8.5 reflect log-linear model extrapolation beyond biological limits."
+#| tbl-cap: "CMIP6 SST ensemble projections at 2050, 2075, and 2100 under three SSP scenarios (reduced SEM, CMIP6 ensemble median SST). Values are posterior median (95% credible interval). Temperature CIs reflect the CMIP6 inter-model spread, which was convolved into each posterior draw (see Methods). Fleshy Algae values >100% under SSP5-8.5 reflect log-linear model extrapolation beyond biological limits."
 
 wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
   wb_proj_tbl |>
