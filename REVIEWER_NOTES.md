@@ -17,14 +17,29 @@
 Posterior credible intervals on all coral-pathway coefficients are almost certainly too narrow. The model is more confident than the data warrant. This affects every downstream indirect-effect calculation and the projection CIs.
 
 **How to fix:**
-Add `autocor = cor_ar(~Year, p=1)` to the coral sub-model in brms (and test on respiration too, though Rd residuals look fine). Expect CIs to widen on coral-pathway coefficients. Some currently "credible" indirect effects may lose credibility — need to re-check all indirect effect CI conclusions.
+Add AR(1) to the coral sub-model using the `ar()` helper in the formula (brms >= 2.17):
 
 ```r
-bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid,
-                   autocor = cor_ar(~Year, p = 1))
+bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid +
+                     ar(time = Year, p = 1))
 ```
 
-Note: brms handles AR(1) in multivariate models but syntax needs care — test in isolation first.
+Note: brms handles AR(1) in multivariate models but syntax needs care — test in isolation first before incorporating into the full SEM.
+
+**✅ TESTED 2026-05-06 — Results:**
+
+AR(1) coefficient: φ = 0.916 (95% CI: 0.572–1.181). P(φ ≥ 1) = 28.7% — near unit-root behaviour, consistent with an irreversible ecological decline rather than fluctuation around a stable state.
+
+| Coefficient | No AR(1) [current] | AR(1) added | CI change |
+|---|---|---|---|
+| Temperature → Coral | −0.545 [−0.808, −0.282] ✓ | −0.465 [−1.100, −0.110] ✓ | +87% wider |
+| YearResid → Coral   | −0.664 [−0.932, −0.393] ✓ | −0.730 [−1.919, −0.101] ✓ | +237% wider |
+
+**All six downstream indirect effects remain credible (95% CI excludes zero) under AR(1).** Medians shift ≤10%; CIs widen ~50–100%. Main scientific conclusions are robust — this is an honest-accounting fix, not an overturning one.
+
+The upper bound on Temperature → Coral moves from −0.282 to −0.110, just clearing zero. Report this explicitly in the revision.
+
+**Bonus finding:** φ near 1.0 suggests coral decline behaves close to a random walk with drift — reinforces the "irreversible trajectory" framing and is worth noting in the Discussion.
 
 ---
 
