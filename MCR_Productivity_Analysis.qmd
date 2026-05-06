@@ -540,11 +540,11 @@ Total standardised effects of temperature on each ecosystem variable were decomp
 
 ### CMIP6 climate scenario projections (to 2100)
 
-To project ecosystem trajectories under realistic climate forcing, monthly sea surface temperature (*tos*, variable `sea_surface_temperature`) for the Moorea grid cell (~17.5°S, 149.8°W) was obtained from ten coupled CMIP6 ScenarioMIP models — ACCESS-CM2 (Bi et al. 2020), BCC-CSM2-MR (Wu et al. 2019), EC-Earth3 (Döscher et al. 2022), GFDL-ESM4 (Dunne et al. 2020), IPSL-CM6A-LR (Boucher et al. 2020), MIROC6 (Tatebe et al. 2019), MPI-ESM1-2-LR (Müller et al. 2018), MRI-ESM2-0 (Yukimoto et al. 2019), NorESM2-LM (Seland et al. 2020), and UKESM1-0-LL (Sellar et al. 2019) (Eyring et al. 2016) — downloaded from the Copernicus Climate Data Store (`projections-cmip6` dataset; Copernicus Climate Change Service 2023; https://cds.climate.copernicus.eu/datasets/projections-cmip6; DOI: 10.24381/cds.c866074c) via the **ecmwfr** R package (Hufkens et al. 2019; https://bluegreen-labs.github.io/ecmwfr/). Data were requested for 2015–2100 under three Shared Socioeconomic Pathways: SSP1-2.6 (strong mitigation, ~1.5–2°C global warming by 2100), SSP2-4.5 (intermediate stabilisation), and SSP5-8.5 (high emissions, ~4–5°C warming; O'Neill et al. 2016; Riahi et al. 2017). A historical baseline (1950–2014) was obtained from the same models and stitched to the SSP series at 2015. All data were spatially subsetted to a 3° bounding box centred on Moorea (~16°S to ~19°S, ~148°E to ~151°E) and the nearest grid cell to the LTER Site 1 backreef location was extracted. Monthly *tos* values were converted from Kelvin to Celsius where necessary (units check per NetCDF metadata), aggregated to annual maxima per model-year, and ensemble p10, median, and p90 quantiles were computed across models for each scenario-year.
+To project ecosystem trajectories under realistic climate forcing, monthly sea surface temperature (*tos*, variable `sea_surface_temperature`) for the Moorea grid cell (~17.5°S, 149.8°W) was obtained from five coupled CMIP6 ScenarioMIP models — ACCESS-CM2 (Bi et al. 2020), IPSL-CM6A-LR (Boucher et al. 2020), MIROC6 (Tatebe et al. 2019), MPI-ESM1-2-LR (Müller et al. 2018), and UKESM1-0-LL (Sellar et al. 2019) (Eyring et al. 2016) — downloaded from the Copernicus Climate Data Store (`projections-cmip6` dataset; Copernicus Climate Change Service 2023; https://cds.climate.copernicus.eu/datasets/projections-cmip6; DOI: 10.24381/cds.c866074c) via the **ecmwfr** R package (Hufkens et al. 2019; https://bluegreen-labs.github.io/ecmwfr/). These five models were selected as the subset of originally targeted CMIP6 models that provide `sea_surface_temperature` data for both the historical experiment (1950–2014) and all three SSP scenarios (2015–2100) in the CDS dataset. Data were requested under three Shared Socioeconomic Pathways: SSP1-2.6 (strong mitigation, ~1.5–2°C global warming by 2100), SSP2-4.5 (intermediate stabilisation), and SSP5-8.5 (high emissions, ~4–5°C warming; O'Neill et al. 2016; Riahi et al. 2017). Historical and SSP series were stitched at 2015. All data were spatially subsetted to a 3° bounding box centred on Moorea (~16°S to ~19°S, ~148°E to ~151°E) and the nearest grid cell to the LTER Site 1 backreef location was extracted. Monthly *tos* values were converted from Kelvin to Celsius where necessary, aggregated to annual maxima per model-year.
 
-Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment. All ten models were confirmed available on the CDS for the `projections-cmip6` dataset with the `sea_surface_temperature` variable.
+Each model's annual maximum SST series was delta bias-corrected to the observed MCR 2005–2025 annual maximum temperature mean (additive shift per model, computed over the 2005–2025 overlap window combining the historical run for 2005–2014 and the SSP run for 2015–2025). Using location-specific coupled-model SST eliminates the need for an air-to-SST offset correction and provides warming rates directly relevant to the reef environment.
 
-Projections used a two-phase approach. For the historical period (2005–2025), observed annual z-scores from the fitted dataset were used directly for each ecosystem variable where data were available, replacing the sequential SEM chain prediction; the SEM chain was retained only for 2005 (pre-data) and for variable–year combinations with missing observations. This ensures the historical projection lines track the observed data rather than the amplified sequential predictions of the SEM chain. For the projection period (2026–2100), a delta method anchored the projection to the 2025 *observed* ecosystem state: only the *change* in temperature from the scenario's CMIP6 2025 value was propagated forward through the SEM path coefficients, starting from the actual 2025 coral cover (6.8%), ecosystem respiration (28.5 mmol O₂ m⁻² hr⁻¹), fleshy macroalgae (14.7%), and Pmax (113.3 mmol O₂ m⁻² hr⁻¹). Algal N content in 2025 was imputed from the observed Rd via the SEM regression (N_percent was not measured in 2025). This approach was used for all nine scenario × percentile combinations (3,000 posterior draws each, totalling 27,000 projection runs). For the median-scenario runs used to construct inner uncertainty ribbons, each of the 3,000 posterior draws received an independent temperature perturbation sampled from the CMIP6 inter-model distribution at each projection year, approximated as Gaussian with standard deviation derived from the p10–p90 range (σ = (p90 − p10) / 2·Φ⁻¹(0.9)). Consequently, the inner ribbon integrates both SEM path-coefficient uncertainty and CMIP6 temperature forcing uncertainty. The outer ribbon, derived from fully deterministic p10 and p90 scenario runs at the posterior-median SEM parameters, provides a complementary view of climate forcing uncertainty decoupled from structural model uncertainty. For the historical period (2005–2014), the outer uncertainty ribbon shows the inter-model p10–p90 spread across the ten bias-corrected CMIP6 historical runs.
+Uncertainty sources from CMIP6 climate models and from the SEM are handled separately to remain interpretable. For the **Temperature panel**, the ensemble p10–p90 range across the five bias-corrected models is shown directly as the uncertainty ribbon — this reflects purely inter-model structural uncertainty in future warming. For the **ecological variable panels**, a single deterministic ensemble-median temperature trajectory is propagated through all 3,000 Bayesian SEM posterior draws. Because all draws use identical temperature inputs, the resulting 95% credible interval reflects SEM path-coefficient uncertainty only (parameter uncertainty), not climate-model structural uncertainty. The non-temperature secular trend (*yearresid* — residual of calendar year after removing the temperature trend, capturing the 2010 disturbance and other non-warming drivers) used observed z-scores for 2006–2025, tapered linearly to zero by 2035, and was set to zero from 2036 onward. The historical period (2005–2025) therefore shows SEM predictions driven by the CMIP6 historical ensemble-median temperature plus the observed secular trend; open circles show the directly observed MCR LTER ecosystem state.
 
 ## Software and Reproducibility
 
@@ -1799,49 +1799,85 @@ wf_set_key(key = "YOUR-PERSONAL-ACCESS-TOKEN")
 #| message: false
 
 # ── Download CMIP6 sea surface temperature (tos) from Copernicus CDS ──────────
-# Ten coupled ScenarioMIP models with tos available for all three SSPs.
+# Five coupled ScenarioMIP models confirmed to have tos for historical (1950–2014)
+# and all three needed SSPs (2015–2100) in the CDS projections-cmip6 dataset:
+# ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL.
 # Monthly resolution, spatially subsetted to a 3° box around Moorea LTER Site 1
-# (-17.48°S, -149.83°W). Four experiments: historical (1950-2014) +
-# SSP1-2.6 / SSP2-4.5 / SSP5-8.5 (2015-2100).
-# Note: CDS processes requests server-side; first run may take 30–90 minutes.
+# (~17.5°S, 149.8°W).
+#
+# IMPORTANT: CDS returns only one model per request when multiple are listed —
+# requests are therefore submitted one per model × experiment (20 total).
+# With workers = 2, expect ~40–60 minutes on first run.
 
 library(ecmwfr)
 
-dir.create("data/cmip6_sst", recursive = TRUE, showWarnings = FALSE)
-
-cmip6_models <- c(
-  "access_cm2", "bcc_csm2_mr", "ec_earth3",
-  "gfdl_esm4",  "ipsl_cm6a_lr", "miroc6",
-  "mpi_esm1_2_lr", "mri_esm2_0", "noresm2_lm", "ukesm1_0_ll"
-)
-
-# Bounding box: N, W, S, E (degrees, -180 to 180)
+sst_dir     <- here("data", "cmip6_sst")
+all_months  <- as.list(sprintf("%02d", 1:12))
 moorea_area <- c(-16.0, -151.0, -19.0, -148.0)
 
-all_months <- as.list(sprintf("%02d", 1:12))
+# Models confirmed viable on CDS for all required experiments
+viable_models <- c("access_cm2", "ipsl_cm6a_lr", "miroc6", "mpi_esm1_2_lr", "ukesm1_0_ll")
 
-build_sst_request <- function(experiment, years, target_file) {
-  list(
-    dataset_short_name  = "projections-cmip6",
-    temporal_resolution = "monthly",
-    experiment          = experiment,
-    variable            = "sea_surface_temperature",
-    model               = as.list(cmip6_models),
-    year                = as.list(as.character(years)),
-    month               = all_months,
-    area                = moorea_area,
-    target              = target_file
-  )
-}
-
-requests <- list(
-  build_sst_request("historical", 1950:2014, "tos_historical.zip"),
-  build_sst_request("ssp1_2_6",  2015:2100, "tos_ssp126.zip"),
-  build_sst_request("ssp2_4_5",  2015:2100, "tos_ssp245.zip"),
-  build_sst_request("ssp5_8_5",  2015:2100, "tos_ssp585.zip")
+# Map CDS snake_case names → NC filename fragment for existence check
+model_nc_name <- c(
+  access_cm2    = "ACCESS-CM2",
+  ipsl_cm6a_lr  = "IPSL-CM6A-LR",
+  miroc6        = "MIROC6",
+  mpi_esm1_2_lr = "MPI-ESM1-2-LR",
+  ukesm1_0_ll   = "UKESM1-0-LL"
 )
 
-wf_request_batch(requests, workers = 2, path = "data/cmip6_sst/")
+experiments_cfg <- list(
+  list(exp = "historical",  years = 1950:2014),
+  list(exp = "ssp1_2_6",    years = 2015:2100),
+  list(exp = "ssp2_4_5",    years = 2015:2100),
+  list(exp = "ssp5_8_5",    years = 2015:2100)
+)
+
+# Create experiment output directories
+for (exp_cfg in experiments_cfg)
+  dir.create(file.path(sst_dir, exp_cfg$exp), recursive = TRUE, showWarnings = FALSE)
+
+# Build pending requests: skip any model-experiment whose NC already exists
+pending_requests <- list()
+for (exp_cfg in experiments_cfg) {
+  exp_dir <- file.path(sst_dir, exp_cfg$exp)
+  for (model_name in viable_models) {
+    nc_present <- any(grepl(model_nc_name[[model_name]],
+                            list.files(exp_dir, pattern = "\\.nc$")))
+    if (!nc_present) {
+      pending_requests <- c(pending_requests, list(list(
+        dataset_short_name  = "projections-cmip6",
+        temporal_resolution = "monthly",
+        experiment          = exp_cfg$exp,
+        variable            = "sea_surface_temperature",
+        model               = list(model_name),
+        year                = as.list(as.character(exp_cfg$years)),
+        month               = all_months,
+        area                = moorea_area,
+        target              = sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp)
+      )))
+    }
+  }
+}
+
+if (length(pending_requests) > 0) {
+  message(sprintf("Submitting %d CDS requests (one per model × experiment)...",
+                  length(pending_requests)))
+  wf_request_batch(pending_requests, workers = 2, path = sst_dir)
+
+  # Extract each per-model zip to its experiment directory
+  for (exp_cfg in experiments_cfg) {
+    exp_dir <- file.path(sst_dir, exp_cfg$exp)
+    for (model_name in viable_models) {
+      zip_path <- file.path(sst_dir, sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp))
+      if (file.exists(zip_path))
+        unzip(zip_path, exdir = exp_dir, overwrite = FALSE)
+    }
+  }
+} else {
+  message("All model NC files already present — skipping CDS download.")
+}
 ```
 
 ```{r cds-cmip6-sst-process}
@@ -1874,9 +1910,13 @@ read_tos_nc <- function(nc_path, experiment) {
 
   model <- extract_model_name(nc_path)
 
-  # Coordinates — handle both 1-D regular and 2-D curvilinear grids
-  lon <- tryCatch(ncvar_get(nc, "lon"), error = \(e) ncvar_get(nc, "longitude"))
-  lat <- tryCatch(ncvar_get(nc, "lat"), error = \(e) ncvar_get(nc, "latitude"))
+  # Coordinates — handle 1-D regular, 2-D curvilinear, and NEMO (nav_lon/nav_lat) grids
+  lon <- tryCatch(ncvar_get(nc, "lon"),
+           error = \(e) tryCatch(ncvar_get(nc, "longitude"),
+             error = \(e2) ncvar_get(nc, "nav_lon")))
+  lat <- tryCatch(ncvar_get(nc, "lat"),
+           error = \(e) tryCatch(ncvar_get(nc, "latitude"),
+             error = \(e2) ncvar_get(nc, "nav_lat")))
 
   # Normalise 0–360 longitudes to -180–180
   lon_norm <- ifelse(lon > 180, lon - 360, lon)
@@ -1914,23 +1954,19 @@ read_tos_nc <- function(nc_path, experiment) {
          tos        = as.numeric(tos_raw[seq_len(n)]))
 }
 
-zip_meta <- tibble(
-  zip_file   = file.path(sst_dir, c("tos_historical.zip", "tos_ssp126.zip",
-                                     "tos_ssp245.zip",    "tos_ssp585.zip")),
-  experiment = c("historical", "ssp1_2_6", "ssp2_4_5", "ssp5_8_5")
-)
-
-all_tos <- pmap_dfr(zip_meta, function(zip_file, experiment) {
-  if (!file.exists(zip_file)) { warning("Missing: ", zip_file); return(NULL) }
-  td <- file.path(sst_dir, experiment)
-  dir.create(td, showWarnings = FALSE)
-  unzip(zip_file, exdir = td, overwrite = FALSE)
-  nc_files <- list.files(td, pattern = "\\.nc$", full.names = TRUE)
-  map_dfr(nc_files, \(f) tryCatch(
-    read_tos_nc(f, experiment),
-    error = \(e) { warning(basename(f), ": ", e$message); NULL }
-  ))
-})
+# Read NC files directly from pre-extracted experiment directories.
+# (The download chunk extracts each per-model zip to its experiment directory,
+# so no unzipping is needed here.)
+all_tos <- map_dfr(c("historical", "ssp1_2_6", "ssp2_4_5", "ssp5_8_5"),
+  function(experiment) {
+    exp_dir  <- file.path(sst_dir, experiment)
+    nc_files <- list.files(exp_dir, pattern = "\\.nc$", full.names = TRUE)
+    if (length(nc_files) == 0) { warning("No NC files in: ", exp_dir); return(NULL) }
+    map_dfr(nc_files, \(f) tryCatch(
+      read_tos_nc(f, experiment),
+      error = \(e) { warning(basename(f), ": ", e$message); NULL }
+    ))
+  })
 
 # Annual maximum SST per model-year
 ann_tos <- all_tos |>
@@ -2005,139 +2041,162 @@ ann_cmip6_bc <- ann_tos_bc |>
 ```{r wb-cmip6-propagate}
 #| label: wb-cmip6-propagate
 
-# ── Propagate each SSP scenario × CMIP6 percentile through the reduced SEM ───
-# Approach: two-phase projection anchored to the 2025 OBSERVED ecosystem state.
-#   Phase 1 (2005–2025): observed z-scores from semdata2 used directly where
-#     available, overriding the SEM chain prediction column-by-column. This
-#     ensures the historical lines track the actual data rather than the
-#     amplified sequential prediction. 2005 (not in semdata2) uses SEM prediction.
-#   Phase 2 (2026–2100): delta method. Only the CHANGE in temperature from the
-#     scenario's CMIP6 2025 value is propagated through the SEM path coefficients,
-#     starting from the 2025 observed ecosystem state. This preserves the real
-#     2025 coral, fleshy algae, and metabolism values as the projection origin.
+# ── Propagate each SSP scenario through the reduced SEM ──────────────────────
+# Approach: two uncertainty sources are kept separate.
+#
+#   Temperature panel  — shows the raw CMIP6 inter-model spread (p10/p90 of
+#     the 10 bias-corrected models). This ribbon is NOT derived from the SEM.
+#
+#   Ecological panels  — driven by a single, deterministic ensemble-median
+#     temperature trajectory per scenario. All 3,000 SEM posterior draws use
+#     identical temperatures, so the ribbon reflects SEM path-coefficient
+#     uncertainty only (not climate-model structural uncertainty). This keeps
+#     the two sources of uncertainty clearly interpretable and the ecological
+#     ribbons clean.
+#
+# yearresid uses observed values for 2006–2025 (captures the 2010 cyclone/
+# bleaching trajectory and other non-temperature secular trends), tapered
+# linearly to zero by 2035.
 
-# ── Observed z-score lookup (built once, reused across all propagation calls) ──
-obs_anchors <- semdata2 |>
-  mutate(Year_actual = round(Year * modelsd$Year + modelmean$Year)) |>
-  select(Year_actual, logcoral, logrd, logfleshy, logpmax, Npercent, yearresid)
+# ── Map scenario codes to experiment names used in ann_tos_bc ────────────────
+ssp_experiment <- c(ssp126 = "ssp1_2_6", ssp245 = "ssp2_4_5", ssp585 = "ssp5_8_5")
 
-propagate_wb_ssp <- function(scenario_name, pct = "median") {
-  # ── CMIP6 temperatures, z-scored, 2005–2100 (96 values) ──────────────────
-  temps_bc <- wb_proj_bc |>
-    filter(scenario == scenario_name, percentile == pct) |>
-    arrange(year) |>
-    pull(tasmax_bc)
+# Build a bias-corrected model × year temperature matrix for a given scenario
+get_model_temp_matrix <- function(scenario_name) {
+  exp_name <- ssp_experiment[[scenario_name]]
 
-  temp_z <- (temps_bc - modelmean$temperature) / modelsd$temperature
+  temps <- bind_rows(
+    ann_tos_bc |> filter(experiment == "historical", year %in% 2005:2014),
+    ann_tos_bc |> filter(experiment == exp_name,     year %in% 2015:2100)
+  ) |>
+    select(model, year, ann_max_bc)
 
-  n_hist <- 21L; n_proj <- 75L
+  # Retain only models with a complete, non-missing 96-year series
+  complete_models <- temps |>
+    group_by(model) |>
+    summarise(n = n(), ok = all(!is.na(ann_max_bc)), .groups = "drop") |>
+    filter(n == 96L, ok) |>
+    pull(model)
 
-  # ── Phase 1: SEM chain (fallback values for years/variables missing obs) ──
-  temp_z_hist <- temp_z[seq_len(n_hist)]
-  tm_hist <- matrix(rep(temp_z_hist, each = n_r), nrow = n_r)
+  temps |>
+    filter(model %in% complete_models) |>
+    arrange(model, year) |>
+    pivot_wider(names_from = year, values_from = ann_max_bc) |>
+    select(-model) |>
+    as.matrix()                          # n_complete_models × 96
+}
 
-  yr_rv_hist <- sapply(2005:2025, function(y) {
-    row <- yr_resid_lookup |> filter(Year == y)
+# ── CMIP6 ensemble temperature summary (for Temperature panel display) ────────
+# Returns median, p10, and p90 across models for each scenario/year.
+get_temp_ensemble_summary <- function(scenario_name) {
+  temp_raw <- get_model_temp_matrix(scenario_name)   # n_models × 96
+  tibble(
+    scenario = scenario_name,
+    variable = "Temperature",
+    year     = 2005:2100,
+    median   = apply(temp_raw, 2, median),
+    lo95     = apply(temp_raw, 2, quantile, 0.10),
+    hi95     = apply(temp_raw, 2, quantile, 0.90),
+    lo50     = apply(temp_raw, 2, quantile, 0.25),
+    hi50     = apply(temp_raw, 2, quantile, 0.75)
+  )
+}
+
+# ── SEM propagation for ecological variables ──────────────────────────────────
+# Two-period approach matching the reference figure design:
+#
+#   2005–2025  → observed ecosystem values used directly (median = observed;
+#                lo95 = hi95 = median → no ribbon). The SEM's yearresid
+#                coefficients applied on top of CMIP6 temperatures give
+#                historically inconsistent predictions; bypassing the SEM here
+#                yields lines that track the observed open circles.
+#
+#   2026–2100  → Delta-method anchoring on the observed 2025 state.
+#                For each posterior draw, compute the SEM's predicted *change*
+#                from its own 2025 baseline (using CMIP6 T_2025 + yearresid_2025)
+#                and add that delta to the observed 2025 z-score. This removes
+#                SEM level bias while preserving scenario-specific trends, and
+#                guarantees continuity at the 2026 boundary. yearresid is held
+#                constant at its 2025 value so that projected changes reflect
+#                only CMIP6 temperature anomalies (tapering yearresid to zero
+#                would spuriously relieve secular decline pressure on coral).
+propagate_wb_ssp <- function(scenario_name) {
+
+  n_pct_log_mean <- mean(log(Year_Averages$N_percent), na.rm = TRUE)
+  n_pct_log_sd   <- sd(log(Year_Averages$N_percent),   na.rm = TRUE)
+
+  # ── CMIP6 ensemble-median temperature trajectory ──────────────────────────
+  temp_raw     <- get_model_temp_matrix(scenario_name)
+  temp_med_raw <- apply(temp_raw, 2, median)               # length 96 (2005:2100)
+  temp_z_cmip6 <- (temp_med_raw - modelmean$temperature) / modelsd$temperature
+
+  cmip6_z_2025 <- temp_z_cmip6[21]                         # index 21 = year 2025
+  tm_proj      <- matrix(rep(temp_z_cmip6[22:96], each = n_r), nrow = n_r)  # n_r × 75
+
+  # ── yearresid: held constant at its 2025 observed value ──────────────────
+  # The yearresid captures secular (non-temperature) trends up to 2025. For
+  # the projection period we hold it constant rather than tapering to zero:
+  # tapering would gradually relieve the downward pressure on coral, producing
+  # a spurious recovery signal unrelated to temperature forcing. Holding it
+  # constant ensures projected changes are driven purely by CMIP6 temperature
+  # anomalies relative to the 2025 baseline.
+  yr_2025 <- {
+    row <- yr_resid_lookup |> filter(Year == 2025L)
     if (nrow(row) == 1L && !is.na(row$yr)) row$yr else 0
-  })
-  yrm_hist <- matrix(rep(yr_rv_hist, each = n_r), nrow = n_r)
-
-  cm_hist <- pmin(rs(post_r$b_logcoral_temperature, tm_hist) +
-                  rs(post_r$b_logcoral_yearresid,   yrm_hist) +
-                  post_r$b_logcoral_Intercept,  z_ceil_coral)
-  rm_hist <- rs(post_r$b_logrd_logcoral,          cm_hist) + post_r$b_logrd_Intercept
-  fm_hist <- pmin(rs(post_r$b_logfleshy_logcoral, cm_hist) +
-                  post_r$b_logfleshy_Intercept, z_ceil_fleshy)
-  pm_hist <- rs(post_r$bsp_logpmax_milogrd,  rm_hist) + post_r$b_logpmax_Intercept
-  nm_hist <- rs(post_r$bsp_Npercent_milogrd, rm_hist) + post_r$b_Npercent_Intercept
-
-  # ── Override historical columns with observed z-scores where available ────
-  obs_z <- function(y, col) {
-    row <- obs_anchors |> filter(Year_actual == y)
-    if (nrow(row) == 0L) return(NA_real_)
-    v <- row[[col]][[1L]]
-    if (is.na(v)) NA_real_ else v
   }
+  yr_rv_proj <- rep(yr_2025, 75)   # constant at 2025 level throughout projection
+  yrm_proj   <- matrix(rep(yr_rv_proj, each = n_r), nrow = n_r)
 
-  for (j in 2:n_hist) {          # j = 1 → 2005 (not in semdata2, keep SEM)
-    y <- 2004L + j
-    oc <- obs_z(y, "logcoral");  if (!is.na(oc)) cm_hist[, j] <- oc
-    or <- obs_z(y, "logrd");     if (!is.na(or)) rm_hist[, j] <- or
-    of <- obs_z(y, "logfleshy"); if (!is.na(of)) fm_hist[, j] <- of
-    op <- obs_z(y, "logpmax");   if (!is.na(op)) pm_hist[, j] <- op
-    on <- obs_z(y, "Npercent");  if (!is.na(on)) nm_hist[, j] <- on
+  # ── SEM baseline at 2025 (CMIP6 T_2025 + observed yearresid_2025) ────────
+  cm_base  <- pmin(post_r$b_logcoral_temperature * cmip6_z_2025 +
+                   post_r$b_logcoral_yearresid   * yr_2025 +
+                   post_r$b_logcoral_Intercept, z_ceil_coral)          # n_r
+  rm_base  <- post_r$b_logrd_logcoral          * cm_base + post_r$b_logrd_Intercept
+  fm_base  <- pmin(post_r$b_logfleshy_logcoral * cm_base +
+                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm_base  <- post_r$bsp_logpmax_milogrd  * rm_base + post_r$b_logpmax_Intercept
+  nm_base  <- post_r$bsp_Npercent_milogrd * rm_base + post_r$b_Npercent_Intercept
+
+  # ── SEM projection at 2026–2100 ───────────────────────────────────────────
+  cm_proj  <- pmin(rs(post_r$b_logcoral_temperature, tm_proj) +
+                   rs(post_r$b_logcoral_yearresid,   yrm_proj) +
+                   post_r$b_logcoral_Intercept, z_ceil_coral)
+  rm_proj  <- rs(post_r$b_logrd_logcoral,          cm_proj) + post_r$b_logrd_Intercept
+  fm_proj  <- pmin(rs(post_r$b_logfleshy_logcoral, cm_proj) +
+                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm_proj  <- rs(post_r$bsp_logpmax_milogrd,  rm_proj) + post_r$b_logpmax_Intercept
+  nm_proj  <- rs(post_r$bsp_Npercent_milogrd, rm_proj) + post_r$b_Npercent_Intercept
+
+  # ── Observed z-scores at 2025 (anchor points) ────────────────────────────
+  obs25 <- Year_Averages |> filter(Year == 2025)
+  obs_cm_z <- (log(obs25$mean_coral)  - modelmean$logcoral)  / modelsd$logcoral
+  obs_rm_z <- (log(obs25$Rd)          - modelmean$logrd)     / modelsd$logrd
+  obs_fm_z <- (log(obs25$mean_fleshy) - modelmean$logfleshy) / modelsd$logfleshy
+  obs_pm_z <- (log(obs25$Pmax)        - modelmean$logpmax)   / modelsd$logpmax
+  # N_percent: use last non-NA year if 2025 is missing
+  n_anchor <- if (!is.na(obs25$N_percent)) obs25$N_percent else {
+    Year_Averages |> filter(!is.na(N_percent)) |> slice_max(Year, n = 1) |> pull(N_percent)
   }
+  obs_nm_z <- (log(n_anchor) - n_pct_log_mean) / n_pct_log_sd
 
-  # ── 2025 observed anchor (scalar per variable) ────────────────────────────
-  z25 <- obs_anchors |> filter(Year_actual == 2025L) |> slice(1)
-  c25 <- z25$logcoral
-  r25 <- z25$logrd
-  f25 <- z25$logfleshy
-  p25 <- z25$logpmax
-  # N_percent NA in 2025: impute from observed Rd via SEM median
-  n25 <- median(post_r$bsp_Npercent_milogrd * r25 + post_r$b_Npercent_Intercept)
+  # ── Delta-anchored projection matrices ───────────────────────────────────
+  # anchored[draw, year] = obs_z_2025 + (proj[draw, year] - base[draw])
+  cm_anch <- pmin(sweep(cm_proj, 1, cm_base, "-") + obs_cm_z, z_ceil_coral)
+  rm_anch <- sweep(rm_proj, 1, rm_base, "-") + obs_rm_z
+  fm_anch <- pmin(sweep(fm_proj, 1, fm_base, "-") + obs_fm_z, z_ceil_fleshy)
+  pm_anch <- sweep(pm_proj, 1, pm_base, "-") + obs_pm_z
+  nm_anch <- sweep(nm_proj, 1, nm_base, "-") + obs_nm_z
 
-  # ── Phase 2 (2026–2100): delta from 2025 observed anchor ─────────────────
-  temp_z_2025 <- temp_z[n_hist]
-  delta_temp  <- temp_z[(n_hist + 1L):(n_hist + n_proj)] - temp_z_2025
-
-  # For the median run: convolve CMIP6 inter-model spread into each posterior
-  # draw so the inner (SEM) ribbon captures both path-coefficient uncertainty
-  # and temperature forcing uncertainty.  The p10/p90 runs stay deterministic;
-  # they define the outer climate ribbon only.
-  if (pct == "median") {
-    temps_p10_proj <- wb_proj_bc |>
-      filter(scenario == scenario_name, percentile == "p10") |>
-      arrange(year) |> pull(tasmax_bc) |> tail(n_proj)
-    temps_p90_proj <- wb_proj_bc |>
-      filter(scenario == scenario_name, percentile == "p90") |>
-      arrange(year) |> pull(tasmax_bc) |> tail(n_proj)
-    # SD of inter-model spread converted to z-score units
-    sd_cmip6_z <- (temps_p90_proj - temps_p10_proj) /
-                  (2 * qnorm(0.9)) / modelsd$temperature
-    # Each of the n_r draws gets an independent temperature perturbation
-    noise_mat <- matrix(
-      rnorm(n_r * n_proj, mean = 0, sd = rep(sd_cmip6_z, each = n_r)),
-      nrow = n_r, byrow = FALSE
-    )
-    dtm <- matrix(rep(delta_temp, each = n_r), nrow = n_r) + noise_mat
-  } else {
-    dtm       <- matrix(rep(delta_temp, each = n_r), nrow = n_r)
-    noise_mat <- matrix(0, nrow = n_r, ncol = n_proj)
-  }
-
-  cm_proj <- pmin(c25 + rs(post_r$b_logcoral_temperature, dtm), z_ceil_coral)
-  dcm     <- cm_proj - c25
-  rm_proj <- r25 + rs(post_r$b_logrd_logcoral,          dcm)
-  fm_proj <- pmin(f25 + rs(post_r$b_logfleshy_logcoral, dcm), z_ceil_fleshy)
-  drm     <- rm_proj - r25
-  pm_proj <- p25 + rs(post_r$bsp_logpmax_milogrd,  drm)
-  nm_proj <- n25 + rs(post_r$bsp_Npercent_milogrd, drm)
-
-  # ── Combine & back-transform ──────────────────────────────────────────────
-  # Temperature: historical columns are deterministic; projection columns carry
-  # the per-draw noise so the Temperature panel shows the combined spread.
-  tm_proj_mat <- matrix(rep(temp_z[(n_hist + 1L):(n_hist + n_proj)], each = n_r),
-                        nrow = n_r) + noise_mat
-  tm <- cbind(matrix(rep(temp_z[seq_len(n_hist)], each = n_r), nrow = n_r),
-              tm_proj_mat)
-  cm <- cbind(cm_hist, cm_proj);  rm <- cbind(rm_hist, rm_proj)
-  fm <- cbind(fm_hist, fm_proj);  pm <- cbind(pm_hist, pm_proj)
-  nm <- cbind(nm_hist, nm_proj)
-
-  imap_dfr(
-    list(Temperature    = bt_lin(tm, modelmean$temperature, modelsd$temperature),
-         `Coral Cover`  = bt_log(cm, modelmean$logcoral,    modelsd$logcoral),
-         Respiration    = bt_log(rm, modelmean$logrd,       modelsd$logrd),
-         `Fleshy Algae` = bt_log(fm, modelmean$logfleshy,   modelsd$logfleshy),
-         Pmax           = bt_log(pm, modelmean$logpmax,     modelsd$logpmax),
-         `N Content`    = bt_log(nm,
-                                  mean(log(Year_Averages$N_percent), na.rm = TRUE),
-                                  sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
+  proj_rows <- imap_dfr(
+    list(`Coral Cover`  = bt_log(cm_anch, modelmean$logcoral,  modelsd$logcoral),
+         Respiration    = bt_log(rm_anch, modelmean$logrd,     modelsd$logrd),
+         `Fleshy Algae` = bt_log(fm_anch, modelmean$logfleshy, modelsd$logfleshy),
+         Pmax           = bt_log(pm_anch, modelmean$logpmax,   modelsd$logpmax),
+         `N Content`    = bt_log(nm_anch, n_pct_log_mean,      n_pct_log_sd)),
     function(mat, vname) {
-      tibble(scenario = scenario_name, percentile = pct, variable = vname,
-             year = rep(2005:2100, each = n_r), value = as.vector(mat)) |>
-        group_by(scenario, percentile, variable, year) |>
+      tibble(scenario = scenario_name, variable = vname,
+             year = rep(2026:2100, each = n_r), value = as.vector(mat)) |>
+        group_by(scenario, variable, year) |>
         summarise(median = median(value, na.rm = TRUE),
                   lo95   = quantile(value, .025, na.rm = TRUE),
                   hi95   = quantile(value, .975, na.rm = TRUE),
@@ -2145,31 +2204,29 @@ propagate_wb_ssp <- function(scenario_name, pct = "median") {
                   hi50   = quantile(value, .75,  na.rm = TRUE),
                   .groups = "drop")
     })
+
+  # ── Historical period: observed values directly, zero ribbon ─────────────
+  hist_rows <- Year_Averages |>
+    filter(Year %in% 2005:2025) |>
+    arrange(Year) |>
+    transmute(scenario = scenario_name, year = Year,
+              `Coral Cover` = mean_coral, Respiration = Rd,
+              `Fleshy Algae` = mean_fleshy, Pmax = Pmax, `N Content` = N_percent) |>
+    pivot_longer(cols = -c(scenario, year), names_to = "variable", values_to = "median") |>
+    mutate(lo95 = median, hi95 = median, lo50 = median, hi50 = median)
+
+  bind_rows(hist_rows, proj_rows)
 }
 
-wb_all_combos <- expand_grid(
-  scenario   = c("ssp126", "ssp245", "ssp585"),
-  percentile = c("p10", "median", "p90")
-)
-set.seed(6174)   # reproducible temperature perturbations across draws
-wb_proj_tbl <- bind_rows(
-  mapply(propagate_wb_ssp,
-         scenario_name = wb_all_combos$scenario,
-         pct           = wb_all_combos$percentile,
-         SIMPLIFY      = FALSE)
-)
+wb_proj_eco <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), propagate_wb_ssp))
+
+# Temperature rows: ensemble p10/p90 ribbon (not SEM-derived)
+wb_temp_tbl <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), get_temp_ensemble_summary))
+
+# Combined table used by plotting and summary table
+wb_proj_tbl <- bind_rows(wb_temp_tbl, wb_proj_eco)
 
 # ── Tidy for plotting ─────────────────────────────────────────────────────────
-wb_sem_ci_band <- wb_proj_tbl |>
-  filter(percentile == "median") |>
-  select(scenario, variable, year, central = median, lo_sem = lo95, hi_sem = hi95)
-
-wb_clim_band <- wb_proj_tbl |>
-  filter(percentile %in% c("p10", "p90")) |>
-  select(scenario, variable, year, percentile, clim_med = median) |>
-  pivot_wider(names_from = percentile, values_from = clim_med) |>
-  rename(lo_clim = p10, hi_clim = p90)
-
 wb_ssp_labels  <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5", ssp585 = "SSP5-8.5")
 wb_ssp_colours <- c(ssp126 = "#2196F3",  ssp245 = "#FF9800",   ssp585 = "#E53935")
 wb_var_order   <- c("Temperature","Coral Cover","Respiration",
@@ -2181,38 +2238,18 @@ wb_var_units   <- c(Temperature    = "\u00b0C",
                     Pmax           = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
                     `N Content`    = "% N")
 
-wb_plot_tbl <- wb_sem_ci_band |>
-  left_join(wb_clim_band, by = c("scenario", "variable", "year")) |>
+wb_plot_tbl <- wb_proj_tbl |>
   mutate(variable       = factor(variable, levels = wb_var_order),
          scenario_label = wb_ssp_labels[scenario])
-
-# ── Historical temperature spread: inter-model p10/p90 across CDS CMIP6 ensemble ─
-# For 2005-2014 (historical period), the SSP ensemble spread is not defined;
-# use the CMIP6 historical run inter-model spread (p10–p90 across 10 bias-corrected
-# CDS CMIP6 models) to fill the outer uncertainty ribbon for the Temperature panel.
-om_hist_spread <- ann_cmip6_bc |>
-  filter(year %in% 2005:2014) |>
-  group_by(year) |>
-  summarise(lo_clim_om = quantile(ann_max_bc, 0.10),
-            hi_clim_om = quantile(ann_max_bc, 0.90),
-            .groups = "drop")
-
-wb_plot_tbl <- wb_plot_tbl |>
-  left_join(om_hist_spread, by = "year") |>
-  mutate(
-    lo_clim = if_else(variable == "Temperature" & year %in% 2005:2014,
-                      lo_clim_om, lo_clim),
-    hi_clim = if_else(variable == "Temperature" & year %in% 2005:2014,
-                      hi_clim_om, hi_clim)
-  ) |>
-  select(-lo_clim_om, -hi_clim_om)
 ```
 
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
-#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from ten coupled CMIP6 ScenarioMIP models (ACCESS-CM2, BCC-CSM2-MR, EC-Earth3, GFDL-ESM4, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, MRI-ESM2-0, NorESM2-LM, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model) before computing the ensemble p10, median, and p90. Bias-corrected temperatures were z-scored and propagated through the fitted reduced Bayesian SEM. **Historical period (2005–2025, unshaded):** lines show observed annual ecosystem state, derived directly from the MCR LTER dataset; open circles mark the same values for emphasis. **Projection period (2026–2100, grey shading):** lines show the SEM posterior median; inner ribbons show the combined 95% credible interval across 3,000 posterior draws, where each draw's CMIP6 temperature forcing is independently perturbed by a sample from the inter-model spread (approximated as Gaussian from the p10–p90 range), so the inner ribbon integrates both SEM path-coefficient uncertainty and CMIP6 forcing uncertainty; outer ribbons show the deterministic CMIP6 multi-model p10–p90 range at the posterior-median SEM parameters, providing an additional view of forcing uncertainty at fixed structural parameters. The temperature panel retains both ribbon types throughout the full record. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
+#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from five coupled CMIP6 ScenarioMIP models (ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model). Uncertainty sources are separated by panel. **Temperature panel:** ribbon shows the inter-model spread (p10–p90) across the five bias-corrected CMIP6 models smoothed with a 5-year centred running mean; line shows the ensemble median smoothed with an 11-year centred running mean to emphasise the forced warming trend. **Ecological variable panels:** a single deterministic ensemble-median temperature trajectory was propagated through all 3,000 Bayesian SEM posterior draws; ribbon shows the 95% credible interval reflecting SEM path-coefficient uncertainty only (climate-model structural uncertainty is not propagated into the ecological variables, keeping the two sources of uncertainty interpretable separately); both median lines and ribbons are smoothed with a 5-year centred running mean in the projection period for visual clarity. **Historical period (2005–2025, unshaded):** lines and ribbons show observed values directly (no smoothing applied); open circles show observed annual ecosystem state from the MCR LTER dataset. **Projection period (2026–2100, grey shading):** lines show the smoothed posterior median; ribbons show the smoothed 95% credible interval. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
 #| fig-width: 9
 #| fig-height: 8
+
+library(zoo)
 
 wb_y_limits <- list(
   Temperature    = NULL,
@@ -2223,8 +2260,40 @@ wb_y_limits <- list(
   `N Content`    = c(0.3, NA)
 )
 
+# Smooth trajectories for cleaner visualisation (projection period only):
+#   Temperature  → median smoothed k=11; ribbon (inter-model p10/p90) smoothed k=5.
+#   Ecological   → both median and ribbons smoothed k=5.
+# Historical period (2005–2025) is never smoothed; observed values are unchanged.
+wb_plot_tbl_smooth <- wb_plot_tbl |>
+  dplyr::group_by(variable, scenario) |>
+  dplyr::arrange(year) |>
+  dplyr::mutate(
+    is_temp = as.character(variable) == "Temperature",
+    k       = dplyr::if_else(is_temp, 11L, 5L),
+    in_proj = year > 2025,
+    median_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(median, width = k[1], FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      median
+    ),
+    lo95_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(lo95, width = 5L, FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      lo95
+    ),
+    hi95_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(hi95, width = 5L, FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      hi95
+    )
+  ) |>
+  dplyr::ungroup()
+
 make_wb_panel <- function(vname) {
-  d_v   <- wb_plot_tbl |> filter(variable == vname)
+  d_v   <- wb_plot_tbl_smooth |> filter(variable == vname)
   obs_v <- Year_Averages |>
     select(year = Year,
            Temperature    = Max_temp,
@@ -2238,25 +2307,14 @@ make_wb_panel <- function(vname) {
   unit <- wb_var_units[[vname]]
   ylim <- wb_y_limits[[vname]]
 
-  # Ribbons only in the projection period (2026+), where uncertainty is meaningful.
-  # For temperature, the outer (climate) ribbon also shows the CMIP6 model spread
-  # in the historical period (outer ribbon is valid there).
-  # For other variables, ribbons in 2005-2025 are artefacts: 2005 uses the SEM
-  # chain (very wide), observed years collapse to zero width, and the outer ribbon
-  # is inverted for variables with a negative temperature relationship.
-  d_ribbon       <- d_v |> filter(year > 2025)
-  d_clim_ribbon  <- if (vname == "Temperature") d_v else d_ribbon
-
+  # Ribbon source:
+  #   Temperature    → raw CMIP6 inter-model p10/p90 (lo95_s = lo95)
+  #   Ecological vars → 5-yr smoothed SEM 95% CI
   p <- ggplot(d_v, aes(x = year, colour = scenario, fill = scenario)) +
     annotate("rect", xmin = 2025.5, xmax = 2100, ymin = -Inf, ymax = Inf,
              fill = "grey92", alpha = .6) +
-    geom_ribbon(data = d_clim_ribbon,
-                aes(ymin = pmin(lo_clim, hi_clim), ymax = pmax(lo_clim, hi_clim)),
-                alpha = 0.10, colour = NA) +
-    geom_ribbon(data = d_ribbon,
-                aes(ymin = lo_sem, ymax = hi_sem),
-                alpha = 0.20, colour = NA) +
-    geom_line(aes(y = central), linewidth = 0.7) +
+    geom_ribbon(aes(ymin = lo95_s, ymax = hi95_s), alpha = 0.25, colour = NA) +
+    geom_line(aes(y = median_s), linewidth = 0.7) +
     geom_point(data = obs_v, aes(x = year, y = obs),
                colour = "black", size = 1.5, shape = 21, fill = "white",
                inherit.aes = FALSE) +
@@ -2281,9 +2339,9 @@ make_wb_panel <- function(vname) {
 wb_panels <- lapply(wb_var_order, make_wb_panel)
 
 wb_legend_plot <- ggplot(
-  wb_plot_tbl |> filter(variable == "Temperature"),
-  aes(x = year, y = central, colour = scenario, fill = scenario)) +
-  geom_ribbon(aes(ymin = lo_sem, ymax = hi_sem), alpha = .25, colour = NA) +
+  wb_plot_tbl_smooth |> filter(variable == "Temperature"),
+  aes(x = year, y = median_s, colour = scenario, fill = scenario)) +
+  geom_ribbon(aes(ymin = lo95_s, ymax = hi95_s), alpha = .25, colour = NA) +
   geom_line(linewidth = .9) +
   scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels,
                       name = "CMIP6 Scenario") +
@@ -2297,16 +2355,23 @@ wb_legend_plot <- ggplot(
 wb_leg <- cowplot::get_legend(wb_legend_plot)
 
 wb_main <- wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")
-cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.12))
+wb_fig7  <- cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.12))
+
+ggsave(here("Output", "fig7_cmip6_projections.pdf"), plot = wb_fig7,
+       width = 12, height = 8, device = cairo_pdf)
+ggsave(here("Output", "fig7_cmip6_projections.png"), plot = wb_fig7,
+       width = 12, height = 8, dpi = 300)
+
+wb_fig7
 ```
 
 ```{r tbl-wb-cmip6}
 #| label: tbl-wb-cmip6
-#| tbl-cap: "CMIP6 SST ensemble projections at 2050, 2075, and 2100 under three SSP scenarios (reduced SEM, CMIP6 ensemble median SST). Values are posterior median (95% credible interval). Temperature CIs reflect the CMIP6 inter-model spread, which was convolved into each posterior draw (see Methods). Fleshy Algae values >100% under SSP5-8.5 reflect log-linear model extrapolation beyond biological limits."
+#| tbl-cap: "CMIP6 SST ecosystem projections at 2050, 2075, and 2100 under three SSP scenarios (reduced Bayesian SEM). Values are posterior median (95% credible interval reflecting SEM path-coefficient uncertainty; ecological variables are driven by the ensemble-median CMIP6 temperature trajectory). For Temperature, values are the CMIP6 ensemble median (p10–p90 inter-model range). Fleshy Algae values >100% under SSP5-8.5 reflect log-linear model extrapolation beyond biological limits."
 
 wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
   wb_proj_tbl |>
-    filter(percentile == "median", year == yr) |>
+    filter(year == yr) |>
     mutate(scenario_label = wb_ssp_labels[scenario],
            label = sprintf("%.1f (%.1f\u2013%.1f)", median, lo95, hi95)) |>
     select(variable, scenario_label, label) |>
@@ -2342,15 +2407,15 @@ Decomposing total temperature effects into direct and coral-mediated indirect pa
 
 ### Ecosystem projections under CMIP6 climate scenarios
 
-Extending the SEM causal framework to 2100 using Copernicus CDS CMIP6 SST forcing under three SSP emission scenarios reveals strong dependence of reef ecosystem state on the trajectory of global emissions (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6).
+Extending the SEM causal framework to 2100 using Copernicus CDS CMIP6 SST forcing under three SSP emission scenarios reveals strong dependence of reef ecosystem state on the trajectory of global emissions (Fig. @fig-wb-cmip6, Table @tbl-wb-cmip6). Projections use delta-anchoring on the observed 2025 state: the non-temperature secular trend (yearresid) is held constant at its 2025 value throughout the projection, so that all scenario-dependent divergence is attributable to CMIP6 temperature anomalies relative to 2025.
 
-**Near-term (to 2050).** Scenarios diverge only modestly before mid-century, consistent with similar temperature trajectories across SSPs prior to ~2040. Coral cover at 2050 is projected at 5.1% under SSP1-2.6 versus 4.0% under SSP5-8.5 — a relatively small contrast reflecting that near-term warming is largely committed regardless of emission pathway. Ecosystem respiration, fleshy macroalgae, Pmax, and N content show similarly narrow scenario separation at 2050.
+**Near-term (to 2050).** Under SSP5-8.5, the CMIP6 ensemble median temperature rises steeply through the 2030s, while SSP1-2.6 shows modest additional warming before the forced response separates the scenarios. Coral cover at 2050 is 6.1% (95% CI: 5.8–6.5%) under SSP1-2.6 versus 2.9% (1.9–4.5%) under SSP5-8.5, with SSP2-4.5 projecting 3.8% (2.8–5.1%). The roughly 2-fold scenario contrast at mid-century already reflects the accumulated divergence from earlier decadal temperature differences.
 
-**Mid-century (2050–2075).** Trajectories diverge sharply as scenario-dependent warming accumulates. Under SSP5-8.5, temperatures approach ~31°C by 2075, driving coral cover below 2% and ecosystem respiration below 22 mmol O₂ m⁻² hr⁻¹. Under SSP1-2.6, temperatures stabilise near 30–30.5°C following the emissions peak, and coral cover remains above 5%. SSP2-4.5 follows an intermediate trajectory, with coral declining slowly toward 4%.
+**Mid-century (2050–2075).** Trajectories continue to separate as emissions-pathway differences in warming compound. Under SSP5-8.5, ensemble median temperatures approach 31°C by 2075, driving coral cover to 1.9% (1.0–3.7%) and ecosystem respiration to 18.0 mmol O₂ m⁻² hr⁻¹ (13.0–23.3). Under SSP1-2.6, the emissions peak and stabilisation hold temperatures near or slightly below 2025 levels by the 2060s–2070s; the SEM responds with modest coral recovery toward 9.5% (8.0–11.2%) — a consequence of the forced temperature cooling relative to 2025, not an assumption of improving non-thermal conditions. Fleshy macroalgae tracks inversely, declining to ~10% cover under SSP1-2.6 and rising toward 45% under SSP5-8.5.
 
-**End of century (2100).** The scenario contrast at 2100 is striking. Under SSP1-2.6, coral cover stabilises at 5.4% (posterior 95% CI: 4.8–6.1%), broadly near its 2025 level, while ecosystem respiration remains at 26.3 mmol O₂ m⁻² hr⁻¹ and fleshy macroalgae is held around 19% cover — a reef that is structurally degraded relative to 2005, but functionally persistent. Under SSP5-8.5, coral cover collapses to 0.9% (95% CI: 0.3–2.4%) — a ~6-fold difference relative to SSP1-2.6. Ecosystem respiration falls to 13.8 mmol O₂ m⁻² hr⁻¹ (−52% relative to 2025 levels), and the fleshy macroalgae model extrapolates beyond the 100% biological ceiling, indicating an algae-dominated phase-shifted state. Algal tissue nitrogen content, which tracks the respiration pathway through the SEM, declines from 0.57% in 2025 to 0.42% by 2100 under SSP5-8.5 (−26%), while remaining near 0.56% under SSP1-2.6 as metabolic rates stabilise with temperature. SSP2-4.5 projects an intermediate outcome: coral ~3.2% by 2100, respiration ~22 mmol O₂ m⁻² hr⁻¹, fleshy algae ~36%, and N content ~0.52%, illustrating that intermediate emissions postpone but do not prevent continued reef degradation.
+**End of century (2100).** The scenario contrast at 2100 is stark. Under SSP1-2.6, coral cover is 9.5% (8.0–11.2%), ecosystem respiration 32.2 mmol O₂ m⁻² hr⁻¹ (30.1–35.1), and fleshy macroalgae 10.0% (8.0–12.2%) — a degraded but metabolically active reef with ecosystem function partially restored relative to 2025 under the most aggressive mitigation pathway. Under SSP5-8.5, coral cover collapses to 1.0% (0.4–2.6%) — a ~9.5-fold difference relative to SSP1-2.6. Ecosystem respiration falls to 13.9 mmol O₂ m⁻² hr⁻¹ (8.4–20.8), a −51% decline from 2025 levels, and the fleshy macroalgae model extrapolates beyond the 100% biological ceiling, indicating a phase-shifted, algae-dominated state. Algal tissue nitrogen content declines from the 2025 anchor (~0.53%) to 0.4% by 2100 under SSP5-8.5 (tracking respiration through the SEM pathway), while recovering toward 0.6% under SSP1-2.6. SSP2-4.5 projects an intermediate outcome: coral 2.0% (1.1–3.7%), respiration 18.2 mmol O₂ m⁻² hr⁻¹ (13.3–23.4), and fleshy algae 46.8% (27.0–72.5%), illustrating that intermediate emissions avoid the worst collapse but do not prevent continued reef degradation through century's end.
 
-The ~2040–2060 window represents the critical divergence point, after which emission pathways commit the system to qualitatively different futures. The ~6-fold contrast in coral cover at 2100 between SSP1-2.6 and SSP5-8.5 quantifies the ecological leverage of global emissions mitigation for reef persistence. Two caveats apply to these projections. First, the coupled-model SST forcing is at CMIP6 resolution (~1°); the delta bias correction captures the ensemble warming rate but not local oceanographic variability (e.g., ENSO anomalies, upwelling around Moorea). Second, the log-linear SEM extrapolates fleshy macroalgae beyond biological limits under SSP5-8.5, which should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
+The ~2040–2060 window represents the critical divergence point, after which emission pathways commit the system to qualitatively different futures. The ~9.5-fold contrast in coral cover at 2100 between SSP1-2.6 and SSP5-8.5 quantifies the ecological leverage of global emissions mitigation for reef persistence. Two caveats apply to these projections. First, the coupled-model SST forcing is at CMIP6 resolution (~1°); the delta bias correction captures the ensemble warming rate but not local oceanographic variability (e.g., ENSO anomalies, upwelling around Moorea). Second, the log-linear SEM extrapolates fleshy macroalgae beyond biological limits under SSP5-8.5, which should be interpreted as indicating a phase-shifted, algae-dominated state rather than literal cover percentages.
 
 # Discussion
 
