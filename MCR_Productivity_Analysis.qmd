@@ -12,7 +12,7 @@ format:
 execute:
   warning: false
   message: false
-  cache: true
+  cache: false
 ---
 
 
@@ -150,6 +150,10 @@ AllNutrients$NN_impute <- predict(modN, newdata = AllNutrients)
 # Model summary
 cat("\nNutrient imputation model (Nitrite+Nitrate ~ Tissue %N):\n")
 summary(modN)
+
+cat("\nNutrient correlation values (Nitrite+Nitrate ~ Tissue %N):\n")
+AllNutrients2<-AllNutrients %>% drop_na()
+corTest(x=AllNutrients2$Nitrite_and_Nitrate, y=AllNutrients2$N_percent)
 ```
 
 ## 3. Benthic Cover Data
@@ -232,7 +236,7 @@ Process fish survey data by trophic groups.
 #| label: process-fish
 
 # Read and process fish data
-fish <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Fish_Survey_20250324.csv"))
+fish <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Fish_Survey_20260304.csv"))
 
 # Process by trophic groups (optimized filtering)
 fish_summary <- fish |>
@@ -933,7 +937,7 @@ ggsave(
 )
 ```
 
-**Model Performance Summary**: The Bayesian temporal trend models showed varying explanatory power across ecosystem variables. Temperature and coral cover trends had the highest R² values (>0.5), indicating highly predictable linear trajectories over time. Metabolic variables (Pmax, Rd, NP) showed moderate explanatory power (R² = 0.2-0.5), reflecting both directional trends and substantial year-to-year variability. Fish biomass trends had lower R² values, suggesting additional drivers beyond benthic habitat changes influence these populations.
+**Model Performance Summary**: The Bayesian temporal trend models showed varying explanatory power across ecosystem variables. Herbivorous fish, N content, and coral cover trends had the highest R² values (>0.7), indicating highly predictable linear trajectories over time. Metabolic variables (Pmax, Rd, NP) showed moderate explanatory power (R² = 0.2-0.5), reflecting both directional trends and substantial year-to-year variability. 
 
 ### Temporal Rates of Change (Natural Scale)
 
@@ -975,8 +979,8 @@ slope_tbl_doc |>
     credible      = sign(lo95_std) == sign(hi95_std),
     Rate = sprintf("%.3g (%s, %s)%s",
                    natural_slope,
-                   formatC(natural_lo95, digits = 3, format = "g"),
-                   formatC(natural_hi95, digits = 3, format = "g"),
+                   formatC(natural_lo95, digits = 2, format = "g"),
+                   formatC(natural_hi95, digits = 2, format = "g"),
                    if_else(credible, "\u2020", "")),
     Direction = if_else(median_std > 0, "\u2191 Increasing", "\u2193 Decreasing")
   ) |>
@@ -1035,14 +1039,14 @@ Fit a Bayesian SEM to understand causal pathways among ecosystem components.
 #| label: sem-preparation
 
 # Calculate year residuals (disturbances beyond temperature)
-yearresid <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.pass))
+yearresid <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
 
-# Prepare scaled SEM data
+# Prepare scaled SEM data 
 semdata2 <- Year_Averages |>
   mutate(
     logfleshy = log(mean_fleshy),
     logrd = log(Rd),
-    logpmax = log(Pmax),
+    logpmax = log(Pmax), 
     logproducers = log(mean_alive),
     N_percent = log(N_percent),
     yearresid = yearresid
@@ -1144,7 +1148,7 @@ cat("Note: R² not computed for responses with extensive missing data imputation
 ```{r sem-dag}
 #| label: fig-sem-dag
 #| cache: false
-#| fig-cap: "**Temperature drives reef ecosystem degradation indirectly through coral loss, which propagates to all six downstream components across ecosystem function and community composition.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM) comprising 11 hypothesised causal pathways among nine ecosystem components, fit to n = 15 annual observations, 2008–2025 (MCR LTER Site 1 backreef). Arrow width is proportional to the absolute standardised path coefficient (|β|); blue = positive effect, red = negative effect; grey = 95% posterior credible interval crosses zero (inconclusive pathway). Standardised β values are shown on each arrow. Shaded regions distinguish ecosystem function variables (purple background; Ecosystem Respiration, Ecosystem Pmax, and Algal N Stock) from community composition variables (blue background; Fleshy Algae, Herbivore Fish, Corallivore Fish). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to analysis to permit direct comparison of effect magnitudes."
+#| fig-cap: "**Temperature drives reef ecosystem degradation indirectly through coral loss, which propagates to all six downstream components across ecosystem function and community composition.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM) comprising 11 hypothesised causal pathways among nine ecosystem components, fit to n = 19 annual observations, 2006–2024 (MCR LTER Site 1 backreef). Arrow width is proportional to the absolute standardised path coefficient (|β|); blue = positive effect, red = negative effect; grey = 95% posterior credible interval crosses zero (inconclusive pathway). Standardised β values are shown on each arrow. Shaded regions distinguish ecosystem function variables (purple background; Ecosystem Respiration, Ecosystem Pmax, and Algal N Stock) from community composition variables (blue background; Fleshy Algae, Herbivore Fish, Corallivore Fish). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to analysis to permit direct comparison of effect magnitudes."
 #| fig-width: 9
 #| fig-height: 4.2
 
@@ -1177,12 +1181,12 @@ dag_edges <- tribble(
   "Temp",  "Coral",      -0.546,  TRUE,   0.00,    0.24,
   "Temp",  "Rd",          0.214,  FALSE, -0.35,    0.24,
   "Temp",  "Pmax",       -0.158,  FALSE, -0.75,   -0.22,
-  "Coral", "Rd",          0.957,  TRUE,  -0.08,    0.24,
+  "Coral", "Rd",          1.077,  TRUE,  -0.08,    0.24,
   "Coral", "Algae",      -0.914,  TRUE,  -0.08,   -0.24,
   "Coral", "Corallivore", 0.644,  TRUE,   0.38,   -0.20,
   "Coral", "Pmax",       -0.353,  FALSE,  0.38,    0.20,
   "Rd",    "N",           0.620,  TRUE,  -0.18,    0.22,   # short diagonal up-right
-  "Rd",    "Pmax",        0.610,  TRUE,   0.00,    0.24,   # straight horizontal below N
+  "Rd",    "Pmax",        0.820,  TRUE,   0.00,    0.24,   # straight horizontal below N
   "Algae", "Herbs",       0.710,  TRUE,   0.00,    0.24    # straight horizontal
 ) |>
   mutate(direction = if_else(est >= 0, "pos", "neg"), abs_est = abs(est)) |>
@@ -1453,7 +1457,7 @@ indirect_effects |>
 #| fig-height: 9.72
 
 # Unscaling parameters
-yearresid_full <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.pass))
+yearresid_full <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
 
 Yearmodelvalues <- Year_Averages |>
   mutate(
@@ -1774,9 +1778,9 @@ proj_tbl <- imap_dfr(proj_list, function(mat, vname) {
          Year     = rep(proj_years, each = n),
          value    = as.vector(mat)) |>
     group_by(variable, Year) |>
-    summarise(median = median(value),
-              lo95   = quantile(value, 0.025), hi95 = quantile(value, 0.975),
-              lo50   = quantile(value, 0.25),  hi50 = quantile(value, 0.75),
+    summarise(median = median(value, na.rm = TRUE),
+              lo95   = quantile(value, 0.025, na.rm = TRUE), hi95 = quantile(value, 0.975, na.rm = TRUE),
+              lo50   = quantile(value, 0.25,  na.rm = TRUE), hi50 = quantile(value, 0.75,  na.rm = TRUE),
               .groups = "drop")
 })
 
@@ -1897,17 +1901,21 @@ proj_list_r[["P:R Ratio"]] <- proj_list_r$Pmax / proj_list_r$Respiration
 proj_tbl_r <- imap_dfr(proj_list_r, function(mat, vname) {
   tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
     group_by(variable, Year) |>
-    summarise(median = median(value),
-              lo95 = quantile(value, .025), hi95 = quantile(value, .975),
-              lo50 = quantile(value, .25),  hi50 = quantile(value, .75),
+    summarise(median = median(value, na.rm = TRUE),
+              lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
+              lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
               .groups = "drop")
 })
 
 # ── Counterfactual: temperature stabilised at 2025 ────────────────────────────
 # temp_2025_std: z-standardised 2025 annual maximum temperature
 # = (observed 2025 max temp - SEM temperature mean) / SEM temperature SD
-temp_2025_std <- (Year_Averages$Max_temp[Year_Averages$Year == 2025] -
-                    modelmean$temperature) / modelsd$temperature
+# Use last non-NA Max_temp as the counterfactual (2025 is NA)
+temp_2025_val <- Year_Averages |>
+  filter(!is.na(Max_temp)) |>
+  slice_max(Year, n = 1) |>
+  pull(Max_temp)
+temp_2025_std <- (temp_2025_val - modelmean$temperature) / modelsd$temperature
 temp_mat_r_cf <- temp_mat_r
 temp_mat_r_cf[, which(proj_years > 2025)] <- temp_2025_std
 
@@ -1932,9 +1940,9 @@ proj_tbl_r_cf <- imap_dfr(
   function(mat, vname) {
     tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
       group_by(variable, Year) |>
-      summarise(median = median(value),
-                lo95 = quantile(value, .025), hi95 = quantile(value, .975),
-                lo50 = quantile(value, .25),  hi50 = quantile(value, .75),
+      summarise(median = median(value, na.rm = TRUE),
+                lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
+                lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
                 .groups = "drop")
   })
 
@@ -2591,7 +2599,7 @@ knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
 
 ### Community composition and environmental change
 
-The MCR LTER Site 1 backreef underwent substantial reorganisation over 2006–2025 (Fig. @fig-benthic). Coral cover declined from 31.0% to 6.8% (−78%), while fleshy macroalgae increased from 5.5% to 14.7% (+167%). Bayesian temporal trend models confirmed directional change across all major community variables (Fig. @fig-temporal): coral cover showed the strongest rate of decline (β = −0.14 SD yr⁻¹, R² = 0.70), corallivore fish biomass declined in parallel (β = −0.13 SD yr⁻¹, R² = 0.52), and herbivore biomass increased (β = +0.15 SD yr⁻¹, R² = 0.66). Annual maximum temperature increased modestly but consistently over the study period (β = +0.07 SD yr⁻¹, R² = 0.19), corresponding to approximately +0.65°C over 20 years. Algal tissue nitrogen content showed the strongest temporal signal among biogeochemical variables (β = −0.17 SD yr⁻¹, R² = 0.78).
+The MCR LTER Site 1 backreef underwent substantial reorganisation over 2006–2025 (Fig. @fig-benthic). Coral cover declined from 31.0% to 6.8% (−78%), while fleshy macroalgae increased from 5.5% to 14.7% (+167%). Bayesian temporal trend models confirmed directional change across all major community variables (Fig. @fig-temporal): coral cover showed the strongest rate of decline (β = −0.14 SD yr⁻¹, R² = 0.70), corallivore fish biomass declined in parallel (β = −0.13 SD yr⁻¹, R² = 0.53), and herbivore biomass increased (β = +0.14 SD yr⁻¹, R² = 0.70). Annual maximum temperature increased modestly but consistently over the study period (β = +0.07 SD yr⁻¹, R² = 0.19), corresponding to approximately +0.11°C over the study period. Algal tissue nitrogen content showed the strongest temporal signal among biogeochemical variables (β = −0.17 SD yr⁻¹, R² = 0.78).
 
 ### Ecosystem metabolism
 
@@ -2599,11 +2607,11 @@ Ecosystem respiration (Rd) declined markedly from a mean of 57 mmol O₂ m⁻² 
 
 ### Causal pathways through the reef ecosystem
 
-A Bayesian SEM encompassing eight response variables and 12 causal pathways revealed coral cover as the central mediator of ecosystem change (Fig. @fig-sem-dag; path coefficients: Fig. @fig-sem-paths; conditional effects: Fig. @fig-sem-conditional). Year was positively associated with temperature (β = 0.47, 95% CI 0.12–0.82), and temperature negatively drove coral cover (β = −0.55, 95% CI −1.27 to −0.10). The coral sub-model included a first-order autoregressive (AR(1)) residual structure to account for pronounced temporal autocorrelation in coral cover residuals (φ = 0.92, 95% CI 0.57–1.20). This near-unit-root AR coefficient indicates that disturbances to coral cover have an estimated half-life of ~8–9 years, consistent with the low post-disturbance resilience documented for Indo-Pacific reefs, and appropriately widens credible intervals on the coral path coefficients relative to an independent-errors specification. A non-thermal temporal predictor — the residual of calendar year after removing the temperature trend (*yearresid*) — also credibly predicted coral cover (β = −0.89, 95% CI −2.27 to −0.10). Because `yearresid` absorbs all non-warming secular processes simultaneously (disturbance dynamics, fishing pressure trends, ocean acidification, and any other time-correlated forcing), this coefficient cannot be attributed to any single mechanism; it quantifies the aggregate association between non-thermal secular change and coral decline over the study period. Coral cover in turn was the strongest predictor of ecosystem respiration (β = 0.96, 95% CI 0.57–1.33), fleshy macroalgae (β = −0.91, 95% CI −1.13 to −0.70), and corallivore fish biomass (β = 0.64, 95% CI 0.26–1.02). Herbivore fish biomass was positively predicted by fleshy macroalgae cover (β = 0.71, 95% CI 0.37–1.06), consistent with bottom-up trophic control. Ecosystem respiration in turn predicted algal nitrogen content (β = 0.62, 95% CI 0.25–1.00) and Pmax (β = 0.61, 95% CI 0.18–1.04). Three tested pathways — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62) and Pmax (β = −0.16, 95% CI −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, 95% CI −1.40 to 0.71) — had credible intervals that included zero. Bayesian R² was 0.22 for temperature and 0.71 for coral cover (the year-residual predictor accounted for the large improvement from the prior R² of 0.29).
+A Bayesian SEM encompassing eight response variables and 12 causal pathways revealed coral cover as the central mediator of ecosystem change (Fig. @fig-sem-dag; path coefficients: Fig. @fig-sem-paths; conditional effects: Fig. @fig-sem-conditional). Year was positively associated with temperature (β = 0.47, 95% CI 0.12–0.82), and temperature negatively drove coral cover (β = −0.55, 95% CI −0.83 to −0.28). The coral sub-model included a first-order autoregressive (AR(1)) residual structure to account for pronounced temporal autocorrelation in coral cover residuals (φ = 0.92, 95% CI 0.57–1.20). This near-unit-root AR coefficient indicates that disturbances to coral cover have an estimated half-life of ~8–9 years, consistent with the low post-disturbance resilience documented for Indo-Pacific reefs, and appropriately widens credible intervals on the coral path coefficients relative to an independent-errors specification. A non-thermal temporal predictor — the residual of calendar year after removing the temperature trend (*yearresid*) — also credibly predicted coral cover (β = −0.67, 95% CI −0.93 to −0.41). Because `yearresid` absorbs all non-warming secular processes simultaneously (disturbance dynamics, fishing pressure trends, ocean acidification, and any other time-correlated forcing), this coefficient cannot be attributed to any single mechanism; it quantifies the aggregate association between non-thermal secular change and coral decline over the study period. Coral cover in turn was the strongest predictor of ecosystem respiration (β = 1.08, 95% CI 0.64–1.53), fleshy macroalgae (β = −0.91, 95% CI −1.13 to −0.70), and corallivore fish biomass (β = 0.64, 95% CI 0.26–1.02). Herbivore fish biomass was positively predicted by fleshy macroalgae cover (β = 0.71, 95% CI 0.37–1.06), consistent with bottom-up trophic control. Ecosystem respiration in turn predicted algal nitrogen content (β = 0.62, 95% CI 0.25–1.00) and Pmax (β = 0.61, 95% CI 0.18–1.04). Three tested pathways — direct temperature effects on respiration (β = 0.22, 95% CI −0.22 to 0.62) and Pmax (β = −0.16, 95% CI −0.78 to 0.45), and a direct coral effect on Pmax (β = −0.35, 95% CI −1.40 to 0.71) — had credible intervals that included zero. Bayesian R² was 0.22 for temperature and 0.71 for coral cover (the year-residual predictor accounted for the large improvement from the prior R² of 0.29).
 
 ### Temperature effects are predominantly indirect
 
-Decomposing total temperature effects into direct and coral-mediated indirect pathways revealed that coral decline was the dominant transmission mechanism for most ecosystem responses (Fig. @fig-temp-indirect). The indirect effect of temperature on ecosystem respiration, operating through coral loss, was substantial and directionally credible (β_indirect = −0.46, 95% CI −1.27 to −0.09), while the direct thermal effect was inconclusive (β_direct = 0.22, 95% CI −0.22 to 0.62), and the total effect did not exclude zero. For Pmax, direct and indirect temperature pathways partially cancelled; the indirect component alone was credible (β_indirect = −0.27, 95% CI −0.88 to −0.02). All indirect temperature effects on fleshy macroalgae (β = +0.45, 95% CI 0.09–1.17), corallivore fish (β = −0.31, 95% CI −0.91 to −0.05), herbivore fish (β = +0.31, 95% CI 0.06–0.92), and algal nitrogen content (β = −0.28, 95% CI −0.89 to −0.04) were mediated entirely through coral cover and retained credible intervals excluding zero. The wider credible intervals relative to the original non-autocorrelation-corrected model reflect the reduced effective sample size of the coral time series, but the directional conclusions are unchanged: all six coral-mediated indirect temperature effects remain credible.
+Decomposing total temperature effects into direct and coral-mediated indirect pathways revealed that coral decline was the dominant transmission mechanism for most ecosystem responses (Fig. @fig-temp-indirect). The indirect effect of temperature on ecosystem respiration, operating through coral loss, was substantial and directionally credible (β_indirect = −0.59, 95% CI −1.27 to −0.09), while the direct thermal effect was inconclusive (β_direct = 0.21, 95% CI −0.22 to 0.62), and the total effect did not exclude zero. For Pmax, the coral-mediated indirect pathway (β_indirect ≈ +0.19) is inconclusive because the Coral → Pmax direct path does not exclude zero (β = −0.35, 95% CI −1.40 to 0.71); the Rd → Pmax pathway (β = 0.82) provides the stronger credible link to photosynthetic capacity. All indirect temperature effects on fleshy macroalgae (β = +0.50, 95% CI 0.09–1.17), corallivore fish (β = −0.35, 95% CI −0.91 to −0.05), herbivore fish (β = +0.36, 95% CI 0.06–0.92), and algal nitrogen content (β = −0.37, 95% CI −0.89 to −0.04) were mediated entirely through coral cover and retained credible intervals excluding zero. The wider credible intervals relative to the original non-autocorrelation-corrected model reflect the reduced effective sample size of the coral time series, but the directional conclusions are unchanged: all five remaining coral-mediated indirect temperature effects remain credible.
 
 ### Ecosystem projections under CMIP6 climate scenarios
 
@@ -2678,7 +2686,7 @@ Our results suggest that even reefs maintaining some coral cover experience func
 
 ## Coral as an Ecological Hub: Temperature Acts Through Structure
 
-The central finding of this analysis is that two decades of ocean warming have degraded reef ecosystem function primarily by dismantling coral structure, not by directly suppressing the physiology of individual organisms. Across every ecosystem variable we examined — respiration, photosynthesis, herbivory, corallivory, and nutrient cycling — the indirect temperature effect mediated through coral decline was either larger than, or the only credible component of, the total thermal signal. Direct temperature effects on ecosystem respiration (β = 0.22, 95% CI −0.21 to 0.62) and maximum photosynthetic capacity (β = −0.16, 95% CI −0.79 to 0.46) were both inconclusive, while their indirect counterparts (−0.58 and −0.19 respectively) were directionally credible. This pattern is not a statistical artefact: it reflects an ecological reality in which coral colonies function as keystone structures rather than just organisms. Coral provides physical framework, photosynthetic biomass, associated heterotrophic microbiomes, and three-dimensional habitat simultaneously; warming-induced bleaching and mortality therefore cascades across all of these pathways at once.
+The central finding of this analysis is that two decades of ocean warming have degraded reef ecosystem function primarily by dismantling coral structure, not by directly suppressing the physiology of individual organisms. For five of the six ecosystem variables examined — respiration, corallivory, herbivory, fleshy macroalgae, and nutrient cycling — the indirect temperature effect mediated through coral decline was either larger than, or the only credible component of, the total thermal signal. The exception is Pmax: the one-hop indirect pathway via coral (β ≈ +0.19) was inconclusive, though temperature influences Pmax strongly through the credible Coral → Respiration → Pmax chain (β = 1.08 × 0.82). Direct temperature effects on ecosystem respiration (β = 0.21, 95% CI −0.22 to 0.62) and maximum photosynthetic capacity (β = −0.16, 95% CI −0.78 to 0.45) were both inconclusive, while the indirect effect on respiration (β_indirect = −0.59) was directionally credible. This pattern is not a statistical artefact: it reflects an ecological reality in which coral colonies function as keystone structures rather than just organisms. Coral provides physical framework, photosynthetic biomass, associated heterotrophic microbiomes, and three-dimensional habitat simultaneously; warming-induced bleaching and mortality therefore cascades across all of these pathways at once.
 
 This contrasts sharply with the more commonly invoked direct warming hypothesis, in which ocean temperature is expected to stimulate microbial and heterotrophic metabolism (as in terrestrial systems) or suppress photosynthesis through bleaching of individual symbionts. Our data do not rule out those mechanisms acting at sub-annual timescales, but at the decadal scale of community reorganisation, structural loss appears to be the dominant transmission pathway. Ecosystem respiration declined 49% over 20 years not because metabolic rate constants fell, but because the coral-associated heterotrophic biomass that drives reef respiration — corals, their endosymbionts, and associated microbial communities — was removed. The mechanism is closer to deforestation than to metabolic inhibition.
 
@@ -2690,7 +2698,7 @@ The respiration–nitrogen pathway (β = 0.62, 95% CI 0.24–1.01) provides spec
 
 ## Indirect Effects Along Trophic Pathways
 
-The two causal chains through community composition — Coral → Fleshy Algae → Herbivores, and Coral → Corallivores — show a coherent but ecologically nuanced response to warming. Corallivore fish biomass declined in parallel with coral cover (β = 0.65, 95% CI 0.26–1.02), as expected for a guild with obligate dietary dependence on live coral. Herbivore fish biomass, by contrast, increased over the same period (β_indirect temperature = +0.35, 95% CI 0.14–0.66), driven by expanding macroalgal food resources. At first glance this might seem compensatory, but the two responses operate through distinct pathways and the herbivore increase does not prevent macroalgal expansion — instead, the macroalgae–herbivore relationship represents bottom-up resource tracking rather than top-down regulation of algal abundance. Fleshy macroalgae expanded despite (and indeed facilitated) herbivore increases, suggesting that herbivory alone is insufficient to prevent phase-shift dynamics when coral structural complexity is lost.
+The two causal chains through community composition — Coral → Fleshy Algae → Herbivores, and Coral → Corallivores — show a coherent but ecologically nuanced response to warming. Corallivore fish biomass declined in parallel with coral cover (β = 0.64, 95% CI 0.26–1.02), as expected for a guild with obligate dietary dependence on live coral. Herbivore fish biomass, by contrast, increased over the same period (β_indirect temperature = +0.35, 95% CI 0.14–0.66), driven by expanding macroalgal food resources. At first glance this might seem compensatory, but the two responses operate through distinct pathways and the herbivore increase does not prevent macroalgal expansion — instead, the macroalgae–herbivore relationship represents bottom-up resource tracking rather than top-down regulation of algal abundance. Fleshy macroalgae expanded despite (and indeed facilitated) herbivore increases, suggesting that herbivory alone is insufficient to prevent phase-shift dynamics when coral structural complexity is lost.
 
 These trophic dynamics have practical management implications. The consistent dominance of indirect (coral-mediated) over direct temperature effects across all six ecosystem variables implies that interventions targeting coral — whether through bleaching mitigation, shade structures, or active restoration — should in principle intercept the cascades before they propagate to fish assemblages, metabolism, and nutrient cycling. Local management of herbivore populations (e.g., controlling sea urchin or fish harvest) may be insufficient on its own if the primary leverage point is further upstream in the causal chain. Conversely, the fact that multiple ecosystem properties are coupled through a single hub suggests that successful coral recovery could trigger broad functional recovery, rather than requiring separate management of each endpoint.
 
@@ -2818,17 +2826,20 @@ resp_meta <- tibble(
 )
 
 # Actual calendar years aligned to semdata2 rows
+# actual_years must match rows brms used: excludes years where any non-mi()
+# predictor is NA (i.e. yearresid = NA when Max_temp = NA for 2025)
 actual_years <- Year_Averages |>
-  filter(!is.na(log_coral)) |>
+  filter(!is.na(log_coral), !is.na(Max_temp)) |>
   pull(Year)
 
 obs_fit_df <- resp_meta$resp |>
   map(function(r) {
     obs  <- semdata2[[r]]
     fit  <- fitted(brms_sem_reduced, resp = r)[, c("Estimate", "Q2.5", "Q97.5")]
+    n_fit <- nrow(fit)
     tibble(
-      Year     = actual_years,
-      observed = obs,
+      Year     = actual_years[seq_len(n_fit)],
+      observed = obs[seq_len(n_fit)],
       fitted   = fit[, "Estimate"],
       lo95     = fit[, "Q2.5"],
       hi95     = fit[, "Q97.5"],
@@ -2902,15 +2913,14 @@ wrap_plots(ppc_plots, ncol = 4)
 #| fig-width: 6
 #| fig-height: 4
 
-# resp_meta defined in fig-sem-obs-fit; redefined here for chunk independence
-if (!exists("resp_meta")) {
-  resp_meta <- tibble(
-    resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
-              "Corallivore", "herbs",    "logpmax", "Npercent"),
-    label = c("Temperature", "Coral cover", "Ecosystem respiration", "Fleshy macroalgae",
-              "Corallivore biomass", "Herbivore biomass", "Ecosystem Pmax", "Algal N content")
-  )
-}
+# Always redefine resp_meta for this chunk to avoid inheriting factor levels
+# or newline-embedded labels from fig-sem-obs-fit
+resp_meta <- tibble(
+  resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
+            "Corallivore", "herbs",    "logpmax", "Npercent"),
+  label = c("Temperature", "Coral cover", "Ecosystem respiration", "Fleshy macroalgae",
+            "Corallivore biomass", "Herbivore biomass", "Ecosystem Pmax", "Algal N content")
+)
 
 # Responses where bayes_R2 is reliable (no missing values in the response variable)
 reliable_resps <- c("temperature", "logcoral", "logfleshy")
@@ -2933,12 +2943,15 @@ r2_reliable <- reliable_resps |>
 
 r2_manual <- manual_resps |>
   map(function(r) {
-    obs <- semdata2[[r]]
-    ok  <- !is.na(obs)
-    fit <- fitted(brms_sem_reduced, resp = r)[ok, "Estimate"]
+    obs      <- semdata2[[r]]
+    fit_full <- fitted(brms_sem_reduced, resp = r)
+    n_fit    <- nrow(fit_full)
+    obs_fit  <- obs[seq_len(n_fit)]   # align to rows brms actually used
+    ok       <- !is.na(obs_fit)
+    fit      <- fit_full[ok, "Estimate"]
     tibble(
       resp      = r,
-      median_r2 = cor(fit, obs[ok])^2,
+      median_r2 = cor(fit, obs_fit[ok])^2,
       lo95      = NA_real_,
       hi95      = NA_real_,
       method    = "manual"
@@ -2948,7 +2961,8 @@ r2_manual <- manual_resps |>
 
 r2_df <- bind_rows(r2_reliable, r2_manual) |>
   left_join(resp_meta, by = "resp") |>
-  mutate(label = fct_reorder(label, median_r2))
+  arrange(median_r2) |>
+  mutate(label = factor(as.character(label), levels = as.character(label)))
 
 ggplot(r2_df, aes(x = median_r2, y = label)) +
   geom_errorbarh(
@@ -2977,7 +2991,7 @@ ggplot(r2_df, aes(x = median_r2, y = label)) +
 
 ```{r tbl-sem-paths}
 #| label: tbl-sem-paths
-#| tbl-cap: "**Supplementary Table 1.** Standardised path coefficients from the Bayesian multivariate structural equation model (12 pathways, n = 20 annual observations, 2005–2025). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to modelling. The coral sub-model includes a first-order autoregressive residual structure (AR(1)); the AR coefficient φ is reported as a separate row. Year residual is the residual of calendar year regressed on maximum annual temperature, capturing secular coral decline beyond the thermal trend. β = posterior median standardised path coefficient; 95% CI = posterior credible interval; Rhat = potential scale reduction factor (values < 1.01 indicate convergence); Bulk ESS = bulk effective sample size; Tail ESS = tail effective sample size. Pathways for which the 95% CI excludes zero are considered credible (marked †)."
+#| tbl-cap: "**Supplementary Table 1.** Standardised path coefficients from the Bayesian multivariate structural equation model (12 pathways, n = 19 annual observations, 2006–2024). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to modelling. The coral sub-model includes a first-order autoregressive residual structure (AR(1)); the AR coefficient φ is reported as a separate row. Year residual is the residual of calendar year regressed on maximum annual temperature, capturing secular coral decline beyond the thermal trend. β = posterior median standardised path coefficient; 95% CI = posterior credible interval; Rhat = potential scale reduction factor (values < 1.01 indicate convergence); Bulk ESS = bulk effective sample size; Tail ESS = tail effective sample size. Pathways for which the 95% CI excludes zero are considered credible (marked †)."
 
 # Build tidy table from brms fixed effects summary
 sem_coef_table <- as.data.frame(summary(brms_sem_full)$fixed) |>
