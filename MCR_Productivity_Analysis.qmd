@@ -563,7 +563,7 @@ Key packages: **tidyverse** 2.0 (Wickham et al. 2019), **brms** 2.21 (Bürkner 2
 ```{r benthic-plot}
 #| label: fig-benthic
 #| cache: false
-#| fig-cap: "**Reef benthic community composition at MCR LTER Site 1 backreef, 2006–2025.** Stacked area plot shows annual mean proportional cover of major benthic functional groups derived from point-intercept photoquadrat transects (6 transects × 30 points per year). Coral cover (green) declined from 31.0% in 2006 to 6.8% in 2025, a 78% reduction over 20 years, while fleshy macroalgae (yellow-green) expanded from 5.5% to 14.7% (+167%). Crustose coralline algae (pink), turf algae (tan), and other categories are included for completeness. Error ribbons show ±1 SE across transects."
+#| fig-cap: "**Coral cover declined 78% while fleshy macroalgae nearly tripled at Moorea backreef over 20 years.** Annual mean percent cover of major benthic functional groups at MCR LTER Site 1 backreef, 2006–2025 (n = 6 transects × 30 points per year; 180 points yr⁻¹). Data are from point-intercept photoquadrat surveys. Coral cover (brown) fell from 31.0% in 2006 to 6.8% in 2025 (−78%); fleshy macroalgae (green) expanded from 5.5% to 14.7% (+167%). Crustose coralline algae (dark brown) declined from 1.8% to 0.3% (−83%); turf algae and cyanobacteria (grey-green) increased from 46.9% to 68.1% (+45%); sand (gold) decreased from 14.7% to 10.1% (−31%)."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -670,7 +670,7 @@ temporal_models |>
 ```{r temporal-plot}
 #| label: fig-temporal
 #| cache: false
-#| fig-cap: "**Directional change across all major reef ecosystem variables at MCR LTER Site 1 backreef, 2005–2025.** (a) Posterior distributions of the standardised temporal slope (change per SD yr⁻¹) from independent Bayesian linear regression models fit to z-scored annual data. The vertical dashed line marks zero; white tick marks indicate 95% posterior credible intervals. Red = increasing trend, blue = decreasing trend; intervals excluding zero indicate credible directional change. (b) Raw annual observations (points) overlaid with posterior median trend lines and 95% credible interval ribbons on original measurement scales. Variables shown (top to bottom): coral cover (%), fleshy macroalgae cover (%), crustose coralline algae cover (%), corallivore fish biomass (g m⁻²), herbivore fish biomass (g m⁻²), algal tissue nitrogen content (%), ecosystem respiration Rd (mmol O₂ m⁻² hr⁻¹), maximum photosynthetic capacity Pmax (mmol O₂ m⁻² hr⁻¹), net community production NP (mmol O₂ m⁻² hr⁻¹), and annual maximum sea surface temperature (°C). Bayesian R² values are reported for each trend model."
+#| fig-cap: "**Six of ten ecosystem variables show credible directional change over 20 years, with coral cover, algal nitrogen, and nitrate declining while macroalgae and herbivore biomass increased.** (A) Posterior distributions of the standardised temporal slope (change per SD yr⁻¹) from independent Bayesian linear regression models fit to z-scored annual data (n = 13–20 annual observations per variable, 2005–2025, depending on availability). The vertical dashed line marks zero; white tick marks indicate 95% posterior credible intervals. Red = increasing trend, blue = decreasing trend; credible intervals excluding zero indicate directional change. (B) Raw annual observations (points) overlaid with posterior median trend lines and 95% credible interval ribbons on original measurement scales. Variables shown (top to bottom): coral cover (%), fleshy macroalgae cover (%), corallivore fish biomass (g m⁻²), herbivore fish biomass (g m⁻²), algal tissue nitrogen content (%), ecosystem respiration Rd (mmol O₂ m⁻² hr⁻¹), maximum photosynthetic capacity Pmax (mmol O₂ m⁻² hr⁻¹), net community production NP (mmol O₂ m⁻² hr⁻¹), annual maximum sea surface temperature (°C), and water-column nitrate + nitrite (µmol L⁻¹). Bayesian R² (posterior median) is shown for each trend model."
 #| fig-width: 8.2
 #| fig-height: 11.81
 
@@ -935,13 +935,72 @@ ggsave(
 
 **Model Performance Summary**: The Bayesian temporal trend models showed varying explanatory power across ecosystem variables. Temperature and coral cover trends had the highest R² values (>0.5), indicating highly predictable linear trajectories over time. Metabolic variables (Pmax, Rd, NP) showed moderate explanatory power (R² = 0.2-0.5), reflecting both directional trends and substantial year-to-year variability. Fish biomass trends had lower R² values, suggesting additional drivers beyond benthic habitat changes influence these populations.
 
+### Temporal Rates of Change (Natural Scale)
+
+```{r temporal-rate-table}
+#| label: tbl-temporal-rates
+#| cache: false
+#| tbl-cap: "**Annual rates of change on the natural scale for each measured ecosystem parameter at MCR LTER Site 1 backreef, 2005–2025.** Rates are back-transformed from standardised Bayesian linear regression slopes (posterior median × variable SD). The 95% credible interval (CI) is derived from the 2.5th and 97.5th posterior quantiles. Direction indicates whether the trend is increasing or decreasing; credible trends have 95% CIs that exclude zero (†)."
+
+# Units lookup (natural-scale units per year for each variable)
+units_map_doc <- tibble(
+  var   = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores",
+            "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate"),
+  Units = c("% cover yr\u207b\u00b9", "% cover yr\u207b\u00b9",
+            "g m\u207b\u00b2 yr\u207b\u00b9", "g m\u207b\u00b2 yr\u207b\u00b9",
+            "% N yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "\u00b0C yr\u207b\u00b9", "\u00b5mol L\u207b\u00b9 yr\u207b\u00b9")
+)
+
+# Summarise posterior slopes from temporal_results into median + 95% CI
+slope_tbl_doc <- temporal_results |>
+  group_by(Parameter) |>
+  summarise(
+    median_std = median(Year),
+    lo95_std   = quantile(Year, 0.025),
+    hi95_std   = quantile(Year, 0.975),
+    .groups    = "drop"
+  )
+
+slope_tbl_doc |>
+  left_join(scale_params |> select(Parameter, sd, var), by = "Parameter") |>
+  left_join(units_map_doc, by = "var") |>
+  mutate(
+    natural_slope = median_std * sd,
+    natural_lo95  = lo95_std  * sd,
+    natural_hi95  = hi95_std  * sd,
+    credible      = sign(lo95_std) == sign(hi95_std),
+    Rate = sprintf("%.3g (%s, %s)%s",
+                   natural_slope,
+                   formatC(natural_lo95, digits = 3, format = "g"),
+                   formatC(natural_hi95, digits = 3, format = "g"),
+                   if_else(credible, "\u2020", "")),
+    Direction = if_else(median_std > 0, "\u2191 Increasing", "\u2193 Decreasing")
+  ) |>
+  arrange(median_std) |>
+  select(Parameter, Units, `Rate (95% CI)` = Rate, Direction) |>
+  kbl(align = c("l", "l", "r", "c")) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width        = FALSE,
+    position          = "left"
+  ) |>
+  footnote(
+    general       = "\u2020 95% credible interval excludes zero.",
+    general_title = ""
+  )
+```
+
 ## Correlation Analysis
 
 ```{r correlations}
 #| label: fig-correlations
 #| eval: false
 #| include: false
-#| fig-cap: "**Pairwise Pearson correlations among major reef ecosystem variables at MCR LTER Site 1 backreef, 2005–2025.** Upper triangle: ellipses scaled and oriented by Pearson correlation coefficient (r); narrow horizontal ellipses indicate strong positive correlation, narrow vertical ellipses indicate strong negative correlation. Lower triangle: numeric r values. Diagonal: variable names. Asterisks denote significance thresholds from two-tailed t-tests (* p < 0.05, ** p < 0.01, *** p < 0.001; no correction for multiple comparisons). Variables are ordered by hierarchical clustering of the correlation matrix. NP = annual mean net community production (mmol O₂ m⁻² hr⁻¹); Rd = ecosystem dark respiration; Pmax = maximum photosynthetic capacity; %N = algal tissue nitrogen content; N+N = water-column nitrite + nitrate concentration (µmol L⁻¹); % Coral = coral cover; % Algae = fleshy macroalgae cover; Herbs/eroder = herbivorous and bioeroding fish biomass (g m⁻²); Corallivore = corallivore fish biomass; Max Temp = annual maximum sea surface temperature (°C). n = 15–21 year-pairs depending on variable availability."
+#| fig-cap: "**Coral cover is strongly positively correlated with ecosystem respiration and corallivore biomass, and negatively correlated with temperature, fleshy macroalgae, and algal nitrogen.** Pairwise Pearson correlation matrix among ten reef ecosystem variables at MCR LTER Site 1 backreef, 2005–2025 (n = 15–21 annual observations per pair, depending on variable availability). Upper triangle: ellipses scaled and oriented by Pearson r; narrow horizontal ellipses indicate strong positive correlation, narrow vertical ellipses indicate strong negative correlation. Lower triangle: numeric r values. Variables are ordered by hierarchical clustering of the correlation matrix. Asterisks indicate significance from two-tailed t-tests: * p < 0.05, ** p < 0.01, *** p < 0.001 (no correction for multiple comparisons). NP = annual mean net community production (mmol O₂ m⁻² hr⁻¹); Rd = ecosystem dark respiration (mmol O₂ m⁻² hr⁻¹); Pmax = maximum photosynthetic capacity (mmol O₂ m⁻² hr⁻¹); %N = algal tissue nitrogen content (%); N+N = water-column nitrite + nitrate (µmol L⁻¹); % Coral = coral cover (%); % Algae = fleshy macroalgae cover (%); Herbs/eroder = herbivorous and bioeroding fish biomass (g m⁻²); Corallivore = corallivore fish biomass (g m⁻²); Max Temp = annual maximum sea surface temperature (°C)."
 #| fig-width: 10
 # Compute correlation matrix
 ct <- corr.test(
@@ -1085,7 +1144,7 @@ cat("Note: R² not computed for responses with extensive missing data imputation
 ```{r sem-dag}
 #| label: fig-sem-dag
 #| cache: false
-#| fig-cap: "**Bayesian structural equation model reveals coral cover as the central mediator of climate-driven ecosystem change.** Directed acyclic graph shows the 11 hypothesised causal pathways among nine ecosystem components, fit simultaneously in a multivariate Bayesian SEM (n = 15 annual observations, 2008–2025). Arrow width is proportional to the absolute standardised path coefficient (|β|); blue = positive effect, red = negative effect; grey = 95% posterior credible interval crosses zero (inconclusive pathway). Standardised β values are shown on each arrow. Shaded background regions distinguish ecosystem function variables (top; Ecosystem Respiration and Ecosystem Pmax in a horizontal row, with Algal N Stock elevated above) from community composition variables (bottom; Fleshy Algae, Herbivore Fish, Corallivore Fish). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to analysis to permit direct comparison of effect magnitudes."
+#| fig-cap: "**Temperature drives reef ecosystem degradation indirectly through coral loss, which propagates to all six downstream components across ecosystem function and community composition.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM) comprising 11 hypothesised causal pathways among nine ecosystem components, fit to n = 15 annual observations, 2008–2025 (MCR LTER Site 1 backreef). Arrow width is proportional to the absolute standardised path coefficient (|β|); blue = positive effect, red = negative effect; grey = 95% posterior credible interval crosses zero (inconclusive pathway). Standardised β values are shown on each arrow. Shaded regions distinguish ecosystem function variables (purple background; Ecosystem Respiration, Ecosystem Pmax, and Algal N Stock) from community composition variables (blue background; Fleshy Algae, Herbivore Fish, Corallivore Fish). All continuous variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to analysis to permit direct comparison of effect magnitudes."
 #| fig-width: 9
 #| fig-height: 4.2
 
@@ -1193,7 +1252,7 @@ ggplot() +
 ```{r sem-paths}
 #| label: fig-sem-paths
 #| cache: false
-#| fig-cap: "**Standardised path coefficients from the Bayesian multivariate structural equation model.** Each panel corresponds to one response variable in the SEM; the x-axis shows the standardised effect size (β) and the y-axis shows the predictor(s) for that response. Points indicate posterior medians; horizontal bars span 95% credible intervals. Filled red symbols (full opacity) indicate paths whose 95% credible interval excludes zero; faded symbols indicate inconclusive paths (interval crosses zero). All variables were z-score standardised prior to modelling, so β values are directly comparable across panels as standard-deviation-per-standard-deviation effects. Coefficients are derived from 15,000 post-warmup MCMC draws of the full 12-pathway SEM (n = 15–21 annual observations, 2005–2025, depending on variable). Temperature and Ecosystem Rd Rate panels show imputed-predictor coefficients (mi() terms in brms) for years with missing observations."
+#| fig-cap: "**Coral cover exerts the strongest and most consistent effects across the SEM, with large positive effects on ecosystem respiration (β = 0.96) and corallivore biomass (β = 0.64) and a large negative effect on fleshy macroalgae (β = −0.91).** Standardised path coefficients from the full Bayesian multivariate structural equation model (12 pathways; n = 15–21 annual observations per response variable, 2005–2025, MCR LTER Site 1 backreef). Each panel corresponds to one response variable; points show posterior medians and horizontal bars span 95% credible intervals derived from 15,000 post-warmup MCMC draws. Filled symbols (full opacity) indicate credible paths (95% CI excludes zero); faded symbols indicate inconclusive paths (CI crosses zero). All variables were log-transformed where appropriate and z-score standardised (mean = 0, SD = 1) prior to modelling, so β values are directly comparable across panels in units of standard deviations of the response per standard deviation of the predictor. Missing predictor values (temperature and ecosystem respiration as predictors of Pmax; ecosystem respiration as predictor of N content) were handled via integrated Bayesian imputation (*mi()* syntax in **brms**)."
 #| fig-width: 16
 #| fig-height: 6
 
@@ -1318,7 +1377,7 @@ all_effects <- imap_dfr(effect_specs, function(spec, resp_name) {
 ```{r temp-indirect-ranking}
 #| label: fig-temp-indirect
 #| cache: false
-#| fig-cap: "**Coral-mediated indirect effects of temperature warming on reef ecosystem components.** Horizontal bars show the posterior median standardised indirect effect of annual maximum sea surface temperature on each ecosystem variable, transmitted entirely through coral cover loss (β_indirect = β(Temperature→Coral) × β(Coral→Response)). Error bars span 95% credible intervals derived from 15,000 post-warmup MCMC draws of the full Bayesian SEM. Blue bars indicate positive indirect effects (temperature → coral decline → increase in response variable); red bars indicate negative indirect effects (temperature → coral decline → decrease in response variable). Opacity distinguishes credible effects (95% CI excludes zero; full opacity) from inconclusive effects (CI crosses zero; faded). Variables are ranked from most negative to most positive indirect effect. All variables were z-score standardised prior to modelling; effect sizes are in units of standard deviations of the response per standard deviation of temperature."
+#| fig-cap: "**Temperature warming exerts its largest credible negative indirect effects on ecosystem respiration and corallivore biomass, and its largest credible positive indirect effect on herbivore biomass, all transmitted through coral cover loss.** Posterior median standardised indirect effects of annual maximum sea surface temperature on six ecosystem variables (n = 7 variables evaluated), transmitted exclusively through coral cover (β_indirect = β(Temperature→Coral) × β(Coral→Response)), derived from 15,000 post-warmup MCMC draws of the full Bayesian SEM (MCR LTER Site 1 backreef). Horizontal bars show posterior medians; error bars span 95% credible intervals. Blue = positive indirect effect (temperature → coral loss → increase in response); red = negative indirect effect (temperature → coral loss → decrease in response). Full opacity = credible effect (95% CI excludes zero); faded = inconclusive (CI crosses zero). Variables are ranked from most negative to most positive indirect effect. Effect sizes are in units of standard deviations of the response per standard deviation of temperature (all variables z-score standardised prior to modelling)."
 #| fig-width: 8
 #| fig-height: 6
 
@@ -1389,7 +1448,7 @@ indirect_effects |>
 ```{r sem-conditional}
 #| label: fig-sem-conditional
 #| cache: false
-#| fig-cap: "**Conditional effect plots for the eight significant causal relationships in the Bayesian SEM.** Each panel shows the marginal posterior-predicted relationship for a predictor–response pair, with all other model predictors held at their posterior means. Lines show posterior means; shaded ribbons show 95% credible intervals. Coloured points are annual observed values (back-transformed from z-score scale to original units). Panels are arranged in causal order from climate forcing through coral-mediated change to ecosystem function: (A) Year → Temperature, (B) Temperature → Coral Cover, (C) Coral Cover → Fleshy Algae, (D) Coral Cover → Ecosystem Respiration, (E) Coral Cover → Corallivore Fish, (F) Fleshy Algae → Herbivore Fish, (G) Ecosystem Respiration → Algal N Content, (H) Ecosystem Respiration → Ecosystem Pmax. Conditional effects were computed using the conditional_effects() function in **brms** and back-transformed to measurement units using study-wide z-score parameters."
+#| fig-cap: "**All eight retained SEM causal pathways are strongly directional and ecologically interpretable, with temperature driving coral loss that cascades through ecosystem function and community composition.** Marginal posterior-predicted relationships for each significant predictor–response pair in the reduced Bayesian SEM (n = 15–21 annual observations per panel, 2005–2025, MCR LTER Site 1 backreef), with all other model predictors held at their posterior means. Lines show posterior medians; shaded ribbons show 95% credible intervals. Points are annual observed values back-transformed from z-score to measurement units. Panels are arranged in causal order from climate forcing through coral-mediated change to ecosystem function: (B) Year → Temperature, (C) Temperature → Coral Cover, (D) Coral Cover → Fleshy Algae, (E) Coral Cover → Ecosystem Respiration, (F) Coral Cover → Corallivore Fish, (G) Fleshy Algae → Herbivore Fish, (H) Ecosystem Respiration → Algal N Content, (I) Ecosystem Respiration → Ecosystem Pmax. Coral cover and fleshy algae axes are on log scales. Conditional effects were computed with `conditional_effects()` in **brms** and back-transformed using study-wide z-score parameters."
 #| fig-width: 7.2
 #| fig-height: 9.72
 
@@ -2368,7 +2427,7 @@ wb_plot_tbl <- wb_proj_tbl |>
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
 #| cache: false
-#| fig-cap: "**CMIP6 SST multi-scenario projections for MCR LTER Site 1 backreef, 2005–2100.** Annual maximum sea surface temperature (*tos*) was obtained from five coupled CMIP6 ScenarioMIP models (ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL) downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) under three shared socioeconomic pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red), for 2015–2100, stitched to the historical CMIP6 run (1950–2014). Each model was delta bias-corrected to the 2005–2025 MCR observational mean (additive shift per model). Uncertainty sources are separated by panel. **Temperature panel:** ribbon shows the inter-model spread (p10–p90) across the five bias-corrected CMIP6 models smoothed with a 5-year centred running mean; line shows the ensemble median smoothed with an 11-year centred running mean to emphasise the forced warming trend. **Ecological variable panels:** a single deterministic ensemble-median temperature trajectory was propagated through all 3,000 Bayesian SEM posterior draws; ribbon shows the 95% credible interval reflecting SEM path-coefficient uncertainty only (climate-model structural uncertainty is not propagated into the ecological variables, keeping the two sources of uncertainty interpretable separately). The coral sub-model includes a first-order autoregressive (AR(1)) residual structure (φ ≈ 0.92); credible intervals are accordingly wider than those from an independent-errors model, reflecting the reduced effective sample size of the coral time series. Both median lines and ribbons are smoothed with a 5-year centred running mean in the projection period for visual clarity. **Historical period (2005–2025, unshaded):** all panels show observed values directly as a connected line through the open circles (no ribbon, no smoothing); this applies to both Temperature (observed MCR annual maximum SST) and all ecological variables. **Projection period (2026–2100, grey shading):** lines show the smoothed posterior median; ribbons show the smoothed 95% credible interval. Fleshy algae y-axis capped at 100% cover (the log-linear SEM projects >100% under SSP5-8.5, which is biologically impossible and reflects model extrapolation beyond the observed range)."
+#| fig-cap: "**Under high-emissions warming (SSP5-8.5), coral cover is projected to decline to near zero by 2060–2075 with cascading losses of ecosystem respiration and corallivore biomass; strong mitigation (SSP1-2.6) substantially slows but does not halt these trajectories.** Ecosystem projections to 2100 for MCR LTER Site 1 backreef, derived from five CMIP6 ScenarioMIP models (ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL) under three Shared Socioeconomic Pathways: SSP1-2.6 (blue), SSP2-4.5 (orange), and SSP5-8.5 (red). Annual maximum sea surface temperature (*tos*) was downloaded from the Copernicus Climate Data Store for the Moorea grid cell (~17.5°S, 149.8°W) and stitched to the historical CMIP6 run (1950–2014) at 2015; each model was delta bias-corrected to the 2005–2025 MCR observational mean. **Temperature panel:** ribbon = inter-model spread (p10–p90 across five models, 5-year centred running mean); line = ensemble median (11-year centred running mean). **Ecological variable panels:** ensemble-median temperature was propagated through 3,000 posterior draws of the reduced Bayesian SEM; ribbon = 95% credible interval reflecting SEM path-coefficient uncertainty only (climate-model structural uncertainty is kept separate for interpretability). The coral sub-model uses an AR(1) residual structure (φ ≈ 0.92), widening credible intervals to reflect reduced effective sample size. Projection-period lines and ribbons smoothed with a 5-year centred running mean. **Historical period (2005–2025, unshaded):** observed annual values shown as open circles connected by lines (no smoothing, no ribbon). **Projection period (2026–2100, grey shading):** smoothed posterior median and 95% CI. Fleshy algae y-axis is capped at 100% cover; projections exceeding this under SSP5-8.5 reflect model extrapolation beyond the observed range."
 #| fig-width: 7.2
 #| fig-height: 7.87
 
@@ -2492,7 +2551,9 @@ wb_legend_plot <- ggplot(
         legend.text  = element_text(size = 10))
 wb_leg <- cowplot::get_legend(wb_legend_plot)
 
-wb_main <- wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")
+wb_main <- (wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")) +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(size = 10, face = "bold"))
 wb_fig7  <- cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.15))
 
 # Export at 183 × 200 mm (Nature double-column); base_size = 10 → 10 pt at print size
@@ -2674,7 +2735,7 @@ Future directions include cross-site SEM comparison across MCR LTER sites (forer
 ```{r fig-pi-curves}
 #| label: fig-pi-curves
 #| cache: false
-#| fig-cap: "**Supplementary Figure 1. Annual photosynthesis-irradiance (PI) curves for MCR LTER Site 1 backreef, 2008–2025.** Points show individual hourly net community production measurements (mmol O₂ m⁻² hr⁻¹) plotted against photosynthetically active radiation (PAR; µmol photons m⁻² s⁻¹). Lines show the fitted rectangular hyperbola for each year, with parameters (α, Pmax, Rd) estimated simultaneously from all 2,928 observations using the Bayesian non-linear model described in Methods. Inset text in each panel shows the posterior median Pmax and Rd (rounded to the nearest integer; units: mmol O₂ m⁻² hr⁻¹). The progressive decline in both Pmax and Rd across years reflects the loss of photosynthetic capacity and ecosystem respiration documented in the main text."
+#| fig-cap: "**Supplementary Figure 1. Both maximum photosynthetic capacity (Pmax) and ecosystem respiration (Rd) declined progressively from 2008 to 2025, consistent with the long-term loss of coral cover.** Annual photosynthesis–irradiance (PI) curves for MCR LTER Site 1 backreef. Points show individual hourly net community production measurements (n = 2,928 total; mmol O₂ m⁻² hr⁻¹) plotted against photosynthetically active radiation (PAR; µmol photons m⁻² s⁻¹). Lines show the fitted rectangular hyperbola for each year, with parameters α (photosynthetic efficiency), Pmax (maximum photosynthetic capacity), and Rd (dark respiration) estimated simultaneously from all observations using the Bayesian non-linear model described in Methods (3 chains × 8,000 iterations, 2,000 warmup; Bayesian R² = 0.84). Inset text in each panel shows the posterior median Pmax and Rd (mmol O₂ m⁻² hr⁻¹)."
 #| fig-width: 9
 #| fig-height: 7
 
@@ -2741,7 +2802,7 @@ ggplot() +
 ```{r fig-sem-obs-fit}
 #| label: fig-sem-obs-fit
 #| cache: false
-#| fig-cap: "**Supplementary Figure 2. Observed versus posterior-fitted trajectories for all eight sub-models of the reduced Bayesian SEM, 2005–2025.** Points show observed z-score standardised values; lines show the posterior median fitted value; shaded ribbons show the 95% posterior credible interval from `fitted()`. All variables are on the z-score scale used for model fitting. Missing observations (ecosystem respiration, Pmax, N content in some years) are excluded from points but imputed internally by the model. Responses are ordered by causal depth in the DAG."
+#| fig-cap: "**Supplementary Figure 2. The reduced Bayesian SEM closely reproduces observed temporal trajectories for all eight ecosystem variables, supporting model adequacy.** Observed versus posterior-fitted annual trajectories for each sub-model of the reduced Bayesian SEM (MCR LTER Site 1 backreef, 2005–2025; n = 15–21 annual observations per sub-model depending on variable availability). Points show observed z-score standardised values; lines show the posterior median fitted value; shaded ribbons show the 95% credible interval from `fitted()` in **brms**. All variables are on the z-score scale used for model fitting. Missing observations (ecosystem respiration, Pmax, and N content in some years) are excluded from points but imputed internally by the model via Bayesian data augmentation. Sub-models are ordered by causal depth in the DAG."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -2799,7 +2860,7 @@ ggplot(obs_fit_df, aes(x = Year)) +
 ```{r fig-sem-ppc}
 #| label: fig-sem-ppc
 #| cache: false
-#| fig-cap: "**Supplementary Figure 3. Posterior predictive checks for all eight sub-models of the reduced Bayesian SEM.** For each response, the dark line shows the kernel density of the observed z-score values; the light blue lines show 100 draws from the posterior predictive distribution. Good model calibration is indicated when the posterior predictive draws envelope the observed density without systematic bias in location, spread, or shape. All variables are on the z-score scale used for model fitting."
+#| fig-cap: "**Supplementary Figure 3. Posterior predictive distributions closely envelop observed data for all eight sub-models, confirming adequate model calibration with no systematic bias in location, spread, or shape.** Posterior predictive checks (PPCs) for each sub-model of the reduced Bayesian SEM (MCR LTER Site 1 backreef, 2005–2025). For each response, the dark line shows the kernel density of the observed z-score standardised values; the 100 light blue lines show draws from the posterior predictive distribution generated by `pp_check()` in **brms**. All variables are on the z-score scale used for model fitting."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -2837,7 +2898,7 @@ wrap_plots(ppc_plots, ncol = 4)
 ```{r fig-sem-r2}
 #| label: fig-sem-r2
 #| cache: false
-#| fig-cap: "**Supplementary Figure 4. Bayesian R² for each sub-model of the reduced SEM.** Points show the posterior median R²; horizontal bars show the 95% posterior credible interval. R² is computed following Gelman et al. (2019) as Var(ŷ) / (Var(ŷ) + Var(e)) across 500 posterior draws using `brms::bayes_R2()`. For sub-models with missing observations in the response variable (ecosystem respiration, corallivore biomass, herbivore biomass, ecosystem Pmax, and algal N content), `bayes_R2()` returns degenerate values because NAs propagate through the residual variance calculation; for these responses the point estimate is the squared Pearson correlation between the posterior-mean fitted values and the observed non-missing values (no CI shown; open circle). Responses are ordered by posterior median R²."
+#| fig-cap: "**Supplementary Figure 4. Sub-model explanatory power is high for temperature and coral cover (R² > 0.7) and moderate for metabolic and fish variables (R² = 0.4–0.7), supporting the adequacy of the causal DAG structure.** Bayesian R² for each sub-model of the reduced Bayesian SEM (MCR LTER Site 1 backreef, 2005–2025). Filled circles with bars show the posterior median R² and 95% credible interval, computed following Gelman et al. (2019) as Var(ŷ) / (Var(ŷ) + Var(ε)) across 500 posterior draws using `brms::bayes_R2()`. For sub-models with missing observations in the response variable (ecosystem respiration, corallivore biomass, herbivore biomass, ecosystem Pmax, and algal N content), `bayes_R2()` returns degenerate values because NAs propagate through the residual variance calculation; for these responses, the point estimate (open circle, no CI) is the squared Pearson correlation between posterior-mean fitted values and observed non-missing values. Sub-models are ordered by posterior median R²."
 #| fig-width: 6
 #| fig-height: 4
 
@@ -3086,6 +3147,12 @@ Shamberger, K. E. F., Feely, R. A., Sabine, C. L., Atkinson, M. J., DeCarlo, E. 
 Shaw, E. C., McNeil, B. I., & Tilbrook, B. (2015). Chemistry and dynamics of the inorganic carbon species in an Australian coral reef. *Marine Chemistry*, 177(2), 194–207. https://doi.org/10.1016/j.marchem.2015.06.008
 
 Yeakel, K. L., Andersson, A. J., Bates, N. R., Courtney, T. A., & Houck, J. (2015). Shifts in coral reef biogeochemistry and resulting acidification linked to offshore productivity. *Proceedings of the National Academy of Sciences*, 112(47), 14512–14517. https://doi.org/10.1073/pnas.1507021112
+
+---
+
+# Code Availability
+
+Statistical analyses were performed using R (www.r-project.org) v.4.4.1 (using libraries brms, tidybayes, bayesplot, tidyverse, lubridate, zoo, patchwork, cowplot, ggridges, ggsci, ggraph, igraph, ggcorrplot2, viridis, scales, slider, kableExtra, psych, glue, here, ncdf4, ecmwfr, httr2, showtext, sysfonts, and patchwork). Code is available for download at [GitHub repository link].
 
 ---
 

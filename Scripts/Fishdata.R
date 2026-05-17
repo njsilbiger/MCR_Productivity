@@ -5,7 +5,7 @@ library(tidyverse)
 library(here)
 
 # read in the fish data
-fish<-read_csv(here("Data","raw_data","MCR_LTER_Annual_Fish_Survey_20250324.csv"))
+fish<-read_csv(here("Data","raw_data","MCR_LTER_Annual_Fish_Survey_20260304.csv"))
 
 # This calculates the total fish data
 fish_clean<-fish %>%
