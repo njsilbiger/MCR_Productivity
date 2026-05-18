@@ -1301,20 +1301,22 @@ gp_edges |>
   geom_point(size = 3, color = "firebrick", aes(alpha = sig)) +
   geom_errorbarh(aes(xmin = lo, xmax = hi, alpha = sig), height = 0, color = "firebrick") +
   geom_vline(xintercept = 0) +
-  scale_alpha(range = c(0.6, 1)) +
+  scale_alpha(range = c(0.4, 1)) +
   labs(
     x = "Standardized Effect Size",
     y = "Predictor Variables",
-    title = "SEM Path Coefficients"
+    title = ""
   ) +
   theme_minimal() +
   facet_wrap(~resp, nrow = 1) +
   theme(
     text = element_text(size = 14),
-    axis.text = element_text(size = 12),
-    strip.text = element_text(size = 12),
+    axis.text = element_text(size = 14),
+    strip.text = element_text(size = 14),
     legend.position = "none"
   )
+
+ggsave(here("Output","Pathcoeffs.pdf"), width = 16, height = 6)
 ```
 
 ## Temperature Effects: Direct vs Indirect
@@ -1420,7 +1422,7 @@ indirect_effects |>
   labs(
     x = "",
     y = "Standardized Indirect Effect Size",
-    title = "Indirect Effects of Temperature via Coral Decline",
+    #title = "Indirect Effects of Temperature via Coral Decline",
   #  subtitle = "Ranked from negative to positive effects with 95% credible intervals"
   ) +
   theme_minimal(base_size = 18) +
@@ -1438,6 +1440,7 @@ indirect_effects |>
     plot.subtitle = element_text(size = 15, color = "gray40")
   )
 
+ggsave(here("Output","Indirect.pdf"), width = 8, height = 6)
 # Print ranked summary
 cat("\n=== Ranked Indirect Effects (negative to positive) ===\n\n")
 indirect_effects |>
@@ -2799,10 +2802,13 @@ ggplot() +
   theme_bw(base_size = 8) +
   theme(
     strip.background = element_blank(),
-    strip.text       = element_text(size = 7.5, face = "bold"),
+    strip.text       = element_text(size = 8, face = "bold"),
     panel.grid.minor = element_blank(),
-    axis.text        = element_text(size = 6)
+    axis.text        = element_text(size = 8),
+    axis.title = element_text(size = 12)
   )
+
+ggsave(here("Output","PICurves.pdf"), width = 9, height = 7)
 ```
 
 ## Supplementary Figure 2: SEM Observed vs. Fitted Trajectories
@@ -2814,7 +2820,6 @@ ggplot() +
 #| fig-width: 10
 #| fig-height: 6
 
-library(tidyverse)
 library(patchwork)
 
 # Response metadata — ordered by causal depth in the DAG
@@ -2895,13 +2900,14 @@ ppc_plots <- map2(resp_meta$resp, resp_meta$label, function(r, lab) {
     theme_bw(base_size = 9) +
     theme(
       legend.position  = "none",
-      plot.title       = element_text(size = 8.5, face = "bold"),
-      axis.title       = element_text(size = 7),
+      plot.title       = element_text(size = 10, face = "bold"),
+      axis.title       = element_text(size = 8),
       panel.grid.minor = element_blank()
     )
 })
 
 wrap_plots(ppc_plots, ncol = 4)
+ggsave(here("Output","ppc.pdf"), width = 10, height = 6)
 ```
 
 ## Supplementary Figure 4: Bayesian R² by Sub-model
