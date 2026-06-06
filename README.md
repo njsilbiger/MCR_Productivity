@@ -1,7 +1,7 @@
 # Moorea Coral Reef Productivity Analysis — Data README
 
 **Project:** Long-term Ecosystem Dynamics at MCR LTER Site 1, Moorea, French Polynesia  
-**PI:** Nyssa Silbiger  
+**Author:** Nyssa Silbiger  
 **Study site:** MCR LTER Site 1 backreef (17.46°S, 149.78°W), Moorea, French Polynesia  
 **Study period:** 2005–2025  
 **Analysis script:** `MCR_Productivity_Analysis.qmd`
@@ -386,6 +386,6 @@ All processed files ──► Year_Averages (in-memory) ──► Bayesian SEM �
 ## General Notes
 
 - All backreef analyses are restricted to **LTER Site 1** unless otherwise noted.
-- Fish biomass units throughout are **grams wet weight per square metre (g m⁻²)**.
+- Fish biomass units throughout are **grams per square metre (g m⁻²)**.
 - Oxygen flux units throughout are **mmol O₂ m⁻² hr⁻¹** after unit conversion (see QC_PP note).
 - Raw data files should not be edited. To update the analysis with a new EDI download, replace the raw file and update the filename reference in the relevant processing chunk of `MCR_Productivity_Analysis.qmd`.
