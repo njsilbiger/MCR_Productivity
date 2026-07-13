@@ -525,7 +525,7 @@ glimpse(Year_Averages)
 ```{r benthic-plot}
 #| label: fig-benthic
 #| cache: false
-#| fig-cap: "**Benthic Cover Figure**."
+#| fig-cap: "**Figure 1.** Benthic community composition at LTER Site 1 backreef (2005–2025)."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -539,7 +539,7 @@ myPal <- c(
 )
 
 # Create stacked area plot
-Benthic_summary_Algae |>
+fig1 <- Benthic_summary_Algae |>
   mutate(name = factor(name, levels = c(
     "Coral", "Fleshy Macroalgae and Turf",
     "Crustose Corallines", "Sand", "Other"
@@ -559,6 +559,15 @@ Benthic_summary_Algae |>
     legend.text = element_text(size = 12),
     legend.position = "bottom"
   )
+
+ggsave(
+  here("Output", "fig1_benthic_cover.pdf"),
+  plot   = fig1,
+  width  = 10,
+  height = 6
+)
+
+fig1
 ```
 
 
@@ -626,7 +635,7 @@ temporal_models |>
 ```{r temporal-plot}
 #| label: fig-temporal
 #| cache: false
-#| fig-cap: "**Bayesian Temporal Trends for each variable**"
+#| fig-cap: "**Figure 2.** Bayesian temporal trends for each variable."
 #| fig-width: 8.2
 #| fig-height: 11.81
 
@@ -876,7 +885,7 @@ fig7 <- panel_a / wrap_elements(panel_b) +
 fig7
 
 ggsave(
-  here("Output", "fig7_temporal_trends.pdf"),
+  here("Output", "fig2_temporal_trends.pdf"),
   plot   = fig7,
   width  = 183,
   height = 300,
@@ -1094,7 +1103,7 @@ cat("Note: R² not computed for responses with extensive missing data imputation
 ```{r sem-dag}
 #| label: fig-sem-dag
 #| cache: false
-#| fig-cap: "**Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM)**" 
+#| fig-cap: "**Figure 3.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM)."
 #| fig-width: 9
 #| fig-height: 4.2
 
@@ -1140,7 +1149,7 @@ dag_edges <- tribble(
 # All edges are straight — no geom_curve needed
 dag_arr <- arrow(length = unit(3.0, "mm"), type = "closed")
 
-ggplot() +
+fig3 <- ggplot() +
   # Faint region backgrounds
   annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 3.2, ymax = 5.65,
            fill = "#EDE7F6", alpha = 0.18, color = NA) +
@@ -1192,6 +1201,15 @@ ggplot() +
   ) +
   guides(color = guide_legend(override.aes = list(linewidth = 1.5))) +
   coord_cartesian(xlim = c(-0.1, 11.8), ylim = c(1.35, 5.75))
+
+ggsave(
+  here("Output", "fig3_sem_dag.pdf"),
+  plot   = fig3,
+  width  = 9,
+  height = 4.2
+)
+
+fig3
 ```
 
 ## SEM Path Coefficients
@@ -1199,7 +1217,7 @@ ggplot() +
 ```{r sem-paths}
 #| label: fig-sem-paths
 #| cache: false
-#| fig-cap: "**SEM effect sizes**"
+#| fig-cap: "**Figure 4.** SEM path coefficient effect sizes."
 #| fig-width: 16
 #| fig-height: 6
 
@@ -1258,7 +1276,7 @@ gp_edges |>
     legend.position = "none"
   )
 
-ggsave(here("Output", "Pathcoeffs.pdf"), width = 16, height = 6)
+ggsave(here("Output", "fig4_sem_paths.pdf"), width = 16, height = 6)
 ```
 
 ## Temperature Effects: Direct vs Indirect
@@ -1325,7 +1343,7 @@ all_effects <- imap_dfr(effect_specs, function(spec, resp_name) {
 ```{r temp-indirect-ranking}
 #| label: fig-temp-indirect
 #| cache: false
-#| fig-cap: "**Vizualizing indirect effects of temperature through coral**" 
+#| fig-cap: "**Figure 5.** Indirect effects of temperature mediated through coral cover."
 #| fig-width: 8
 #| fig-height: 6
 
@@ -1374,7 +1392,7 @@ indirect_effects |>
     panel.grid.minor = element_blank()
   )
 
-ggsave(here("Output", "Indirect.pdf"), width = 8, height = 6)
+ggsave(here("Output", "fig5_temp_indirect.pdf"), width = 8, height = 6)
 
 # Print a ranked summary table of the indirect effects for quick inspection
 indirect_effects |>
@@ -1388,7 +1406,7 @@ indirect_effects |>
 ```{r sem-conditional}
 #| label: fig-sem-conditional
 #| cache: false
-#| fig-cap: "**Conditional effects from the Bayesian SEM**" 
+#| fig-cap: "**Figure 6.** Conditional effects from the Bayesian SEM."
 #| fig-width: 7.2
 #| fig-height: 9.72
 
@@ -1597,7 +1615,7 @@ fig_cond <- (ty_plot | ct_plot) /
             (nr_plot | rp_plot)
 
 ggsave(
-  here("Output", "fig_sem_conditional_effects.pdf"),
+  here("Output", "fig6_sem_conditional.pdf"),
   plot   = fig_cond,
   width  = 183,
   height = 247,
@@ -2340,7 +2358,7 @@ wb_plot_tbl <- wb_proj_tbl |>
 ```{r fig-wb-cmip6}
 #| label: fig-wb-cmip6
 #| cache: false
-#| fig-cap: "**Emissions scenarios**" 
+#| fig-cap: "**Figure 7.** Ecosystem projections under CMIP6 SSP emissions scenarios (2005–2100)."
 #| fig-width: 7.2
 #| fig-height: 7.87
 
@@ -2502,7 +2520,7 @@ knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
 ```{r fig-pi-curves}
 #| label: fig-pi-curves
 #| cache: false
-#| fig-cap: "**Supplementary Figure 1. PI curves.**"
+#| fig-cap: "**Figure S1.** Photosynthesis-irradiance (PI) curves by year."
 #| fig-width: 9
 #| fig-height: 7
 
@@ -2558,7 +2576,7 @@ ggplot() +
     panel.grid.minor = element_blank(),
     axis.text        = element_text(size = 8),
     axis.title = element_text(size = 12))
-ggsave(here("Output", "PICurves.pdf"), width = 9, height = 7)
+ggsave(here("Output", "figS1_pi_curves.pdf"), width = 9, height = 7)
 
 
 ```
@@ -2568,7 +2586,7 @@ ggsave(here("Output", "PICurves.pdf"), width = 9, height = 7)
 ```{r fig-sem-obs-fit}
 #| label: fig-sem-obs-fit
 #| cache: false
-#| fig-cap: "**Supplementary Figure 2. Fit vs observed trajectories."
+#| fig-cap: "**Figure S2.** SEM observed vs. fitted trajectories."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -2605,7 +2623,7 @@ obs_fit_df <- resp_meta$resp |>
   left_join(resp_meta, by = "resp") |>
   mutate(label = factor(label, levels = resp_meta$label))
 
-ggplot(obs_fit_df, aes(x = Year)) +
+figS2 <- ggplot(obs_fit_df, aes(x = Year)) +
   geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "#2c7bb6", alpha = 0.18) +
   geom_line(aes(y = fitted), colour = "#2c7bb6", linewidth = 0.75) +
   geom_point(aes(y = observed), size = 1.6, colour = "black", na.rm = TRUE) +
@@ -2619,6 +2637,10 @@ ggplot(obs_fit_df, aes(x = Year)) +
     panel.grid.minor = element_blank(),
     axis.text.x      = element_text(size = 7)
   )
+
+ggsave(here("Output", "figS2_sem_obs_fit.pdf"), plot = figS2, width = 10, height = 6)
+
+figS2
 ```
 
 ## Supplementary Figure 3: SEM Posterior Predictive Checks
@@ -2626,7 +2648,7 @@ ggplot(obs_fit_df, aes(x = Year)) +
 ```{r fig-sem-ppc}
 #| label: fig-sem-ppc
 #| cache: false
-#| fig-cap: "**Posterior predictive checks."
+#| fig-cap: "**Figure S3.** Posterior predictive checks."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -2653,9 +2675,9 @@ ppc_plots <- map2(resp_meta$resp, resp_meta$label, function(r, lab) {
       panel.grid.minor = element_blank()
     )
 })
-ggsave(here("Output", "ppc.pdf"), width = 10, height = 6)
+ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
 wrap_plots(ppc_plots, ncol = 4)
-ggsave(here("Output","ppc.pdf"), width = 10, height = 6)
+ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
 ```
 
 ## Supplementary Table 1: SEM Path Coefficients
