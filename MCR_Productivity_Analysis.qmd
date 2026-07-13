@@ -1042,8 +1042,25 @@ brms_sem_full <- brm(
   seed = 11,
   sample_prior = "no",
   prior = c(
-    set_prior("normal(0, 2)",    class = "b"),
-    set_prior("normal(0, 2)",    class = "Intercept"),
+    # b-class priors per response (only for responses that have non-mi() predictors)
+    # Npercent is excluded: its only predictor is mi(logrd) → class bsp, not b
+    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "b", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
+    # Intercept priors for all responses
+    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
+    # Response-specific essential priors
     set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
     set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
   ),
@@ -1778,8 +1795,24 @@ brms_sem_reduced <- brm(
   chains  = 3, iter = 10000, warmup = 5000, seed = 11,
   sample_prior = "no",
   prior   = c(
-    set_prior("normal(0, 2)",    class = "b"),
-    set_prior("normal(0, 2)",    class = "Intercept"),
+    # b-class priors per response (logpmax and Npercent excluded: only mi() predictors
+    # → class bsp, not b)
+    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
+    # Intercept priors for all responses
+    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
+    # Response-specific essential priors
     set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
     set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
   ),
@@ -1930,7 +1963,16 @@ wf_set_key(key = "YOUR-PERSONAL-ACCESS-TOKEN")
 # requests are therefore submitted one per model × experiment (20 total).
 # With workers = 2, expect ~40–60 minutes on first run.
 
-sst_dir     <- here("data", "cmip6_sst")
+# ── CDS key setup ─────────────────────────────────────────────────────────────
+# Locally: key was stored in the keyring via the cds-setup chunk.
+# On Code Ocean (or any environment without keyring): set the CDS_API_KEY
+# environment variable in your capsule's Secrets panel, and it will be used here.
+cds_api_key <- Sys.getenv("CDS_API_KEY", unset = "")
+if (nzchar(cds_api_key)) {
+  wf_set_key(key = cds_api_key)
+}
+
+sst_dir     <- here("Data", "cmip6_sst")
 all_months  <- as.list(sprintf("%02d", 1:12))
 moorea_area <- c(-16.0, -151.0, -19.0, -148.0)
 
@@ -1980,7 +2022,16 @@ for (exp_cfg in experiments_cfg) {
   }
 }
 
-if (length(pending_requests) > 0) {
+if (length(pending_requests) == 0) {
+  message("All model NC files already present — skipping CDS download.")
+} else if (!nzchar(cds_api_key)) {
+  stop(
+    "NC files are missing but no CDS API key is available.\n",
+    "  - Locally: run the cds-setup chunk once to store your key in the keyring.\n",
+    "  - On Code Ocean: add your token as a secret named CDS_API_KEY in the\n",
+    "    capsule's Environment > Secrets panel, then re-run."
+  )
+} else {
   message(sprintf("Submitting %d CDS requests (one per model × experiment)...",
                   length(pending_requests)))
   wf_request_batch(pending_requests, workers = 2, path = sst_dir)
@@ -1994,8 +2045,6 @@ if (length(pending_requests) > 0) {
         unzip(zip_path, exdir = exp_dir, overwrite = FALSE)
     }
   }
-} else {
-  message("All model NC files already present — skipping CDS download.")
 }
 ```
 
@@ -2010,7 +2059,7 @@ if (length(pending_requests) > 0) {
 #   wb_proj_bc   — ensemble p10/median/p90 per scenario-year (used in propagation)
 #   ann_cmip6_bc — per-model historical annual max SST (used for spread ribbon)
 
-sst_dir    <- "data/cmip6_sst"
+sst_dir    <- "Data/cmip6_sst"
 moorea_lon <- -149.83
 moorea_lat <- -17.48
 
