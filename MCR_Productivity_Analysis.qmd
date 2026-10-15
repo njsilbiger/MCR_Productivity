@@ -132,6 +132,7 @@ write_csv(Turb, here("Data", "Turb_mean.csv"))
 
 # Water column nutrients (bimonthly surveys 2005-2018)
 water <- read_csv(here("Data", "raw_data", "WaterColumnN.csv")) |>
+  filter(Cruise == "LTER bi-annual") |>
   mutate(
     Date = mdy(Date),
     Year = year(Date)
@@ -376,9 +377,21 @@ fish_coverage <- fish_summary |>
   summarise(surveys = n_distinct(Year), .groups = "drop") |>
   nrow()
 
+temp_years <- lubridate::year(Temp_LTER1$time_local)
+
+# Overall study span, derived from the years actually present across the
+# core long-term datasets, used as the "possible years" denominator below
+study_year_range <- range(c(
+  All_PP_data$Year, Benthic_summary_Algae$Year, fish_summary$Year,
+  temp_years
+), na.rm = TRUE)
+n_possible_years <- diff(study_year_range) + 1
+
 cat("=== Data Coverage Summary ===\n\n")
 cat(sprintf("Ecosystem Metabolism:\n"))
-cat(sprintf("  Total 24-hour cycles: %.0f over 20 years\n", sum(metabolism_coverage$n_measurements)))
+cat(sprintf("  Total 24-hour cycles: %.0f over %d years\n",
+            sum(metabolism_coverage$n_measurements),
+            length(unique(All_PP_data$Year))))
 cat(sprintf("  Annual coverage: %.1f ± %.1f measurements per year (range: %.0f-%.0f)\n",
             mean(metabolism_coverage$n_measurements),
             sd(metabolism_coverage$n_measurements),
@@ -391,20 +404,25 @@ cat(sprintf("  Temporal span: %d years (%d-%d)\n\n",
 
 cat(sprintf("Benthic Surveys:\n"))
 cat(sprintf("  Total surveys: %d (annual coverage)\n", benthic_coverage))
-cat(sprintf("  Years with data: %d of %d possible (100%%)\n\n", benthic_coverage, 21))
+cat(sprintf("  Years with data: %d of %d possible (%.0f%%)\n\n",
+            benthic_coverage, n_possible_years,
+            100 * benthic_coverage / n_possible_years))
 
 cat(sprintf("Fish Surveys:\n"))
 cat(sprintf("  Total surveys: %d (annual coverage)\n", fish_coverage))
-cat(sprintf("  Years with data: %d of %d possible (100%%)\n\n", fish_coverage, 21))
+cat(sprintf("  Years with data: %d of %d possible (%.0f%%)\n\n",
+            fish_coverage, n_possible_years,
+            100 * fish_coverage / n_possible_years))
 
 cat(sprintf("Temperature:\n"))
-cat(sprintf("  Continuous 15-minute measurements: %d-%d (100%% coverage)\n\n", 
-            min(lubridate::year(Temp_LTER1$time_local), na.rm = TRUE),
-            max(lubridate::year(Temp_LTER1$time_local), na.rm = TRUE)))
+cat(sprintf("  Continuous 15-minute measurements: %d-%d (%.0f%% coverage)\n\n", 
+            min(temp_years, na.rm = TRUE),
+            max(temp_years, na.rm = TRUE),
+            100 * length(unique(temp_years)) / n_possible_years))
 
 cat(sprintf("Nutrients:\n"))
-cat(sprintf("  Water column: 2005-2018\n"))
-cat(sprintf("  Tissue nitrogen: 2005-2024"))
+cat(sprintf("  Water column: %d-%d\n", min(water$Year), max(water$Year)))
+cat(sprintf("  Tissue nitrogen: %d-%d", min(Turb$Year), max(Turb$Year)))
 ```
 
 ## Bayesian Photosynthesis-Irradiance (PI) Curve Analysis
@@ -416,6 +434,10 @@ $$PP = \frac{\alpha \cdot P_{max} \cdot PAR}{\alpha \cdot PAR + P_{max}} + R_d$$
 where: - $\alpha$ = initial slope (photosynthetic efficiency) - $P_{max}$ = maximum photosynthetic capacity - $R_d$ = dark respiration (ecosystem respiration) - $PAR$ = photosynthetically active radiation
 
 ```{r bayesian-pi-curve}
+#| label: bayesian-pi-curve
+#| cache: true
+#| dependson: ["process-pp"]
+
 # Bayesian PI curves to extract light-independent Pmax and Rd
 LTER1_Pnet <- All_PP_data |>
   mutate(
@@ -578,6 +600,7 @@ Assess standardized change per year using Bayesian linear models.
 ```{r temporal-trends}
 #| label: temporal-trends
 #| cache: true
+#| dependson: ["integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
 
 # Create standardized dataset
 std_data <- Year_Averages |>
@@ -1013,6 +1036,7 @@ semdata2 <- Year_Averages |>
 ```{r sem-fit}
 #| label: sem-model
 #| cache: true
+#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
 
 # Define SEM structure
 bf_temp <- bf(temperature | mi() ~ 1 + Year)
@@ -1776,6 +1800,7 @@ Three of the twelve pathways in the full SEM had 95% credible intervals spanning
 ```{r sem-reduced-fit}
 #| label: sem-reduced-model
 #| cache: true
+#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
 
 # Reduced SEM: remove 3 non-significant pathways
 bf_temp_r        <- bf(temperature | mi()             ~ 1 + Year)
@@ -2051,6 +2076,7 @@ if (length(pending_requests) == 0) {
 ```{r cds-cmip6-sst-process}
 #| label: cds-cmip6-sst-process
 #| cache: true
+#| dependson: ["cds-cmip6-sst-download"]
 #| echo: false
 #| message: false
 

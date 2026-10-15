@@ -1,0 +1,2969 @@
+---
+title: "Moorea Coral Reef Productivity Analysis: Long-term Ecosystem Dynamics"
+author: "Nyssa Silbiger"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: show
+    theme: cosmo
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  cache: false
+---
+
+
+# Introduction
+
+This report analyzes long-term ecosystem dynamics at LTER Site 1 in Moorea, French Polynesia. We examine relationships between benthic community composition, environmental conditions, fish assemblages, and ecosystem metabolism over nearly two decades (2005-2025). The analysis integrates multiple datasets to understand how coral reef ecosystems are responding to environmental change.
+
+## Setup
+
+```{r setup}
+#| label: setup
+#| cache: false
+
+# Load required libraries
+# Data manipulation
+library(tidyverse)
+library(here)
+library(lubridate)
+library(zoo)
+library(slider)
+library(glue)
+
+# Bayesian modelling
+library(brms)
+library(tidybayes)
+library(bayesplot)
+
+# Visualisation
+library(scales)
+library(patchwork)
+library(cowplot)
+library(viridis)
+library(ggridges)
+library(ggsci)
+library(ggraph)
+library(igraph)
+library(showtext)
+library(sysfonts)
+
+# Statistics / tables
+library(psych)
+library(ggcorrplot2)
+library(kableExtra)
+library(httr2)
+
+# Climate data access and NetCDF handling
+library(ecmwfr)
+library(ncdf4)
+
+# Enable custom fonts
+showtext_auto(enable = TRUE)
+
+# Set global theme
+theme_set(theme_bw())
+
+# Set seed for reproducibility
+set.seed(223)
+```
+
+# Data
+
+## 1. Temperature Data
+
+Extract yearly average and maximum daily temperature values from the backreef temperature time series.
+
+```{r temperature-processing}
+#| label: process-temperature
+
+# Read and process temperature data
+Temp_LTER1 <- read_csv(here("Data", "raw_data", "MCR_LTER02_BTM_Backreef_Forereef_20251114.csv")) |>
+  filter(reef_type_code == "Backreef")
+
+# Calculate daily means, then yearly statistics (optimized with single pass)
+Mean_year_Temp <- Temp_LTER1 |>
+  mutate(date = as.Date(time_local)) |>
+  group_by(date) |>
+  summarise(daily_temp = mean(temperature_c, na.rm = TRUE), .groups = "drop") |>
+  mutate(Year = year(date)) |>
+  group_by(Year) |>
+  summarise(
+    Mean_temp = mean(daily_temp, na.rm = TRUE),
+    Max_temp = max(daily_temp, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Save processed data
+write_csv(Mean_year_Temp, here("Data", "InSituTemp.csv"))
+
+# Quick summary
+summary(Mean_year_Temp)
+```
+
+## 2. Nutrient Data
+
+Process macroalgae tissue nitrogen content and water column nutrients, using tissue N to impute missing water column data.
+
+```{r nutrient-processing}
+#| label: process-nutrients
+
+# Turbinaria %N data (tissue nitrogen as nutrient proxy)
+Turb <- read_csv(here("Data", "raw_data", "MCR_LTER_Macroalgal_CHN_2005_to_2024_20250616.csv")) |>
+  filter(
+    Habitat == "Backreef",
+    Genus == "Turbinaria",
+    Site == "LTER_1",
+    !is.na(N)
+  ) |>
+  group_by(Year) |>
+  summarise(
+    N_percent = mean(N, na.rm = TRUE),
+    C_percent = mean(C, na.rm = TRUE),
+    CN = mean(CN_ratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+write_csv(Turb, here("Data", "Turb_mean.csv"))
+
+# Water column nutrients (bimonthly surveys 2005-2018)
+water <- read_csv(here("Data", "raw_data", "WaterColumnN.csv")) |>
+  filter(Cruise == "LTER bi-annual") |>
+  mutate(
+    Date = mdy(Date),
+    Year = year(Date)
+  ) |>
+  group_by(Year) |>
+  summarise(across(Phosphate:Nitrite_and_Nitrate,  \(x) mean(x, na.rm = TRUE)), .groups = "drop") |>
+  mutate(Site = "LTER 1")
+
+write_csv(water, here("Data", "Water_N_mean.csv"))
+
+# Combine tissue and water column nutrient data into a single table
+AllNutrients <- Turb |>
+  full_join(water, by = "Year") |>
+  arrange(Year)
+
+# Water column N+N was only measured through 2018, so we use the tight linear
+# relationship between Turbinaria tissue %N (measured 2005–2024) and dissolved
+# N+N to interpret the results
+modN <- lm(Nitrite_and_Nitrate ~ N_percent, data = AllNutrients)
+AllNutrients$NN_impute <- predict(modN, newdata = AllNutrients)
+
+summary(modN)
+
+AllNutrients2 <- AllNutrients |> drop_na()
+corTest(x = AllNutrients2$Nitrite_and_Nitrate, y = AllNutrients2$N_percent)
+```
+
+## 3. Benthic Cover Data
+
+Calculate percent cover for functional groups from benthic transect surveys.
+
+```{r benthic-processing}
+#| label: process-benthic
+
+# Read and classify benthic data
+BenthicCover_Algae <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Survey_Benthic_Cover_20251009.csv")) |>
+  filter(Habitat == "Backreef")
+
+# Collapse the 50+ taxa in the raw data into broad functional groups based on
+# ecological role. The long list of algal species and turf categories all go
+# into "Fleshy Macroalgae and Turf" because they compete with coral for space
+# in similar ways. A handful of uncommon categories (sponges, Tridacna, no
+# data entries) are grouped as "Sand" since they occupy space but aren't (<0.5%)
+# functionally important to our questions. Everything else keeps its name.
+Benthic_summary_Algae <- BenthicCover_Algae |>
+  rename(name = Taxonomy_Substrate_Functional_Group) |>
+  mutate(
+    name = case_when(
+      name %in% c(
+        "Amansia rhodantha", "Turbinaria ornata", "Dictyota sp.", "Halimeda sp.",
+        "Galaxaura sp.", "Liagora ceranoides", "Cyanophyta", "Halimeda minima",
+        "Amphiroa fragilissima", "Caulerpa serrulata", "Corallimorpharia",
+        "Dictyota friabilis", "Galaxaura rugosa", "Cladophoropsis membranacea",
+        "Galaxaura filamentosa", "Halimeda discoidea", "Peyssonnelia inamoena",
+        "Caulerpa racemosa", "Valonia ventricosa", "Actinotrichia fragilis",
+        "Dictyota bartayresiana", "Microdictyon umbilicatum", "Halimeda distorta",
+        "Halimeda incrassata", "Halimeda macroloba", "Dictyota implexa",
+        "Gelidiella acerosa", "Dictyosphaeria cavernosa", "Valonia aegagropila",
+        "Microdictyon okamurae", "Halimeda opuntia", "Dichotomaria obtusata",
+        "Chlorodesmis fastigiata", "Phyllodictyon anastomosans", "Phormidium sp.",
+        "Cladophoropsis luxurians", "Sargassum pacificum", "Chnoospora implexa",
+        "Halimeda taenicola", "Boodlea kaeneana", "Padina boryana",
+        "Coelothrix irregularis", "Gelidiella sp.", "Hydroclathrus clathratus",
+        "Dictyota divaricata", "Hypnea spinella", "Dichotomaria marginata",
+        "Sporolithon sp.", "Chaetomorpha antennina", "Asparagopsis taxiformis", "Algal Turf", "Damselfish Turf", "Coral Rubble",
+        "Lobophora variegata", "Shell Debris", "Bare Space"
+      ) ~ "Fleshy Macroalgae and Turf",
+      name %in% c(
+        "Peyssonnelia bornetii", "Peyssonnelia sp.",
+        "Sponge", "Tridacna sp.", "No data"
+      ) ~ "Sand",
+      TRUE ~ name
+    )
+  ) |>
+  group_by(Year, Site, name) |>
+  summarise(
+    total_cover = sum(Percent_Cover, na.rm = TRUE),
+    mean_cover = 100 * total_cover / 5000,
+    .groups = "drop"
+  ) |>
+  mutate(Site = str_replace_all(Site, "_", " "))
+
+write_csv(Benthic_summary_Algae, here("Data", "Benthic_summary_algae.csv"))
+
+# Calculate total calcifiers and living cover
+Total_Calc <- Benthic_summary_Algae |>
+  filter(name %in% c("Coral", "Crustose Corallines")) |>
+  group_by(Year, Site) |>
+  reframe(total_Calc = sum(mean_cover))
+
+TotalLiving <- Benthic_summary_Algae |>
+  filter(name %in% c("Coral", "Crustose Corallines", "Fleshy Macroalgae and Turf")) |>
+  group_by(Year, Site) |>
+  summarise(
+    mean_alive = sum(mean_cover),
+    mean_fleshy = sum(mean_cover[name == "Fleshy Macroalgae and Turf"], na.rm = TRUE),
+    mean_coral = sum(mean_cover[name == "Coral"], na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## 4. Fish Biomass Data
+
+Process fish survey data by trophic groups.
+
+```{r fish-processing}
+#| label: process-fish
+
+# Read and process fish data
+fish <- read_csv(here("Data", "raw_data", "MCR_LTER_Annual_Fish_Survey_20260304.csv"))
+
+# Process fish into trophic groups. We drop three large sharks (Biomass > 8000 g)
+# that show up in the dataset — keeping them would severely bias the "Other"
+# category and obscure trends in the ecologically relevant trophic groups.
+# Negative Biomass values are a data coding convention for missing observations,
+# not real measurements, so those are filtered out too.
+fish_summary <- fish |>
+  filter(
+    Site == "LTER_1",
+    Habitat == "Backreef",
+    Biomass < 8000, # Remove outlier sharks
+    Biomass >= 0 # Remove negative (missing) values
+  ) |>
+  mutate(
+    trophic_new = case_when(
+      Fine_Trophic %in% c("Brusher", "Browser", "Excavator","Concealed Cropper","Cropper",                                    "Scraper","Herbivore/Detritivore") ~ "Herbivores",
+      Fine_Trophic == "Corallivore" ~ "Corallivore",
+      TRUE ~ "Other"
+    )
+  ) |>
+  group_by(Year, trophic_new) |>
+  summarise(
+    fish_g_m2 = sum(Biomass, na.rm = TRUE) / 1200, # 4 transects × 300 m²
+    .groups = "drop"
+  )
+
+write_csv(fish_summary, here("Data", "fish_summary.csv"))
+
+# Read in Fish respiration data (calculated from fish_respiration.R)
+fish_respiration<- read_csv(here("Data", "fish_respiration.csv")) |>
+  filter(Site == "LTER_1")|>
+  select(Year, fish_biomass_g_m2, Rfish_field_mmolO2_m2_h, Rfish_field_se) 
+```
+
+## 5. Primary Production Processing
+
+Process raw production data and extract Pmax and Rd using Bayesian photosynthesis-irradiance curves.
+
+```{r pp-processing}
+#| label: process-pp
+#| cache: true
+
+# Read all QC PP files efficiently
+filedir <- here("Data", "raw_data", "QC_PP")
+files <- dir(path = filedir, pattern = ".csv", full.names = TRUE)
+
+All_PP_data <- files |>
+  set_names() |>
+  map_df(read_csv, .id = "filename", show_col_types = FALSE) |>
+  mutate(DateTime = mdy_hm(DateTime))
+
+# The instrument setup changed in April 2014, shifting the output units from
+# mg O2/m2/h to umol O2/m2/h. Convert the earlier records to match, then
+# build date variables and drop a handful of deployment days with known QC
+# issues (equipment failures, storm interference).
+All_PP_data <- All_PP_data |>
+  mutate(
+    # Convert 2007–2014 records from g O2/m2/h to mmol O2/m2/h
+    across(
+      c(UP_Oxy, DN_Oxy, PP),
+      ~ if_else(DateTime < ymd_hms("2014-04-01 00:00:00"), (.x / 32) * 1000, .x)
+    ),
+    Date = as_date(DateTime),
+    DielDateTime = DateTime + hours(12),
+    DielDate = as_date(DielDateTime),
+    Year = year(DateTime)
+  ) |>
+  filter(!Date %in% mdy(c("5/27/2011", "5/28/2011", "1/21/2014", "05/25/2024")))
+
+# Keep only days with all 24 hourly measurements — partial days would
+# bias the daily metabolic integrals (e.g., missing nighttime R hours
+
+complete_dates <- All_PP_data |>
+  count(DielDate) |>
+  filter(n == 24)
+
+All_PP_data <- complete_dates |>
+  left_join(All_PP_data, by = "DielDate")
+
+# Calculate GP and environmental averages
+Daily_R <- All_PP_data |>
+  group_by(Year, Season, DielDate) |>
+  summarise(R_average = mean(PP[PAR == 0], na.rm = TRUE), .groups = "drop")
+
+All_PP_data <- All_PP_data |>
+  left_join(Daily_R, by = c("Year", "Season", "DielDate")) |>
+  mutate(
+    GP = if_else(PAR == 0, NA_real_, PP - R_average),
+    GP = if_else(GP < 0, NA_real_, GP),
+    Temperature_mean = (UP_Temp + DN_Temp) / 2,
+    Flow_mean = (UP_Velocity_mps + DN_Velocity_mps) / 2
+  )
+
+# Calculate yearly averages
+Year_Averages_PP <- All_PP_data |>
+  mutate(
+    NP = PP,
+    R = if_else(PP < 0, PP, NA_real_)
+  ) |>
+  group_by(Year) |>
+  summarise(
+    NP_mean = mean(NP, na.rm = TRUE),
+    NP_SE = sd(NP, na.rm = TRUE) / sqrt(n()),
+    NP_max = max(NP, na.rm = TRUE),
+    GP_mean = mean(GP, na.rm = TRUE),
+    GP_SE = sd(GP, na.rm = TRUE) / sqrt(n()),
+    R_mean = mean(R, na.rm = TRUE),
+    R_SE = sd(R, na.rm = TRUE) / sqrt(n()),
+    Temperature_mean = mean(Temperature_mean, na.rm = TRUE),
+    Flow_mean = mean(Flow_mean, na.rm = TRUE),
+    PAR_mean = mean(PAR[PAR > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Sampling Coverage Summary
+
+```{r}
+#| label: sampling-coverage
+
+# Calculate sampling metrics
+metabolism_coverage <- All_PP_data |>
+  group_by(Year) |>
+  summarise(
+    n_measurements = n() / 24,  # Convert hourly to daily measurements
+    .groups = "drop"
+  )
+
+benthic_coverage <- Benthic_summary_Algae |>
+  filter(Site == "LTER 1") |>
+  group_by(Year) |>
+  summarise(surveys = n_distinct(Year), .groups = "drop") |>
+  nrow()
+
+fish_coverage <- fish_summary |>
+  group_by(Year) |>
+  summarise(surveys = n_distinct(Year), .groups = "drop") |>
+  nrow()
+
+temp_years <- lubridate::year(Temp_LTER1$time_local)
+
+# Overall study span, derived from the years actually present across the
+# core long-term datasets, used as the "possible years" denominator below
+study_year_range <- range(c(
+  All_PP_data$Year, Benthic_summary_Algae$Year, fish_summary$Year,
+  temp_years
+), na.rm = TRUE)
+n_possible_years <- diff(study_year_range) + 1
+
+cat("=== Data Coverage Summary ===\n\n")
+cat(sprintf("Ecosystem Metabolism:\n"))
+cat(sprintf("  Total 24-hour cycles: %.0f over %d years\n",
+            sum(metabolism_coverage$n_measurements),
+            length(unique(All_PP_data$Year))))
+cat(sprintf("  Annual coverage: %.1f ± %.1f measurements per year (range: %.0f-%.0f)\n",
+            mean(metabolism_coverage$n_measurements),
+            sd(metabolism_coverage$n_measurements),
+            min(metabolism_coverage$n_measurements),
+            max(metabolism_coverage$n_measurements)))
+cat(sprintf("  Temporal span: %d years (%d-%d)\n\n", 
+            length(unique(All_PP_data$Year)),
+            min(All_PP_data$Year),
+            max(All_PP_data$Year)))
+
+cat(sprintf("Benthic Surveys:\n"))
+cat(sprintf("  Total surveys: %d (annual coverage)\n", benthic_coverage))
+cat(sprintf("  Years with data: %d of %d possible (%.0f%%)\n\n",
+            benthic_coverage, n_possible_years,
+            100 * benthic_coverage / n_possible_years))
+
+cat(sprintf("Fish Surveys:\n"))
+cat(sprintf("  Total surveys: %d (annual coverage)\n", fish_coverage))
+cat(sprintf("  Years with data: %d of %d possible (%.0f%%)\n\n",
+            fish_coverage, n_possible_years,
+            100 * fish_coverage / n_possible_years))
+
+cat(sprintf("Temperature:\n"))
+cat(sprintf("  Continuous 15-minute measurements: %d-%d (%.0f%% coverage)\n\n", 
+            min(temp_years, na.rm = TRUE),
+            max(temp_years, na.rm = TRUE),
+            100 * length(unique(temp_years)) / n_possible_years))
+
+cat(sprintf("Nutrients:\n"))
+cat(sprintf("  Water column: %d-%d\n", min(water$Year), max(water$Year)))
+cat(sprintf("  Tissue nitrogen: %d-%d", min(Turb$Year), max(Turb$Year)))
+```
+
+## Bayesian Photosynthesis-Irradiance (PI) Curve Analysis
+
+We fit a Bayesian non-linear model to extract photosynthetic parameters (alpha, Pmax, and Rd) for each year. The model uses a rectangular hyperbola:
+
+$$PP = \frac{\alpha \cdot P_{max} \cdot PAR}{\alpha \cdot PAR + P_{max}} + R_d$$
+
+where: - $\alpha$ = initial slope (photosynthetic efficiency) - $P_{max}$ = maximum photosynthetic capacity - $R_d$ = dark respiration (ecosystem respiration) - $PAR$ = photosynthetically active radiation
+
+```{r bayesian-pi-curve}
+#| label: bayesian-pi-curve
+#| cache: true
+#| dependson: ["process-pp"]
+
+# Bayesian PI curves to extract light-independent Pmax and Rd
+LTER1_Pnet <- All_PP_data |>
+  mutate(
+    tempc = Temperature_mean,
+    Flowmean = Flow_mean,
+    flow_log = log(Flowmean),
+    UPDN = as.factor(UPDN),
+    Year = as.factor(Year)
+  )
+
+# Fit the PI curve as a Bayesian non-linear model rather than ordinary least
+# squares because we need full uncertainty estimates on Pmax and Rd for each
+# year — those uncertainties propagate through the SEM later. The Student-t
+# likelihood handles the occasional outlier measurement without letting it
+# distort the curve. All three parameters (alpha, Pmax, Rd) are estimated
+# simultaneously across all years, with year-specific coefficients for each.
+# This will take a while — run with cache: true.
+fit1_f <- brm(
+  bf(
+    PP ~ ((alpha * Pmax * PAR) / (alpha * PAR + Pmax)) + Rd,
+    nl = TRUE,
+    alpha ~ 0 + Year,
+    Pmax ~ 0 + Year,
+    Rd ~ 0 + Year
+  ) + student(),
+  data = LTER1_Pnet,
+  set_rescor(FALSE),
+  prior = c(
+    prior(normal(0.1, 10), nlpar = "alpha", lb = 0),
+    prior(normal(-100, 10), nlpar = "Rd", ub = 0),
+    prior(normal(100, 10), nlpar = "Pmax", lb = 0)
+  ),
+  control = list(adapt_delta = 0.95, max_treedepth = 20),
+  cores = 3,
+  chains = 3,
+  seed = 223,
+  iter = 8000,
+  warmup = 2000
+)
+
+# Extract Pmax and Rd coefficients
+names <- rownames(fixef(fit1_f))
+coefficients <- as_tibble(fixef(fit1_f)) |>
+  mutate(params = names)
+
+PRValues <- coefficients |>
+  separate(params, sep = "_", into = c("param_type", "yearname"), remove = FALSE) |>
+  filter(param_type %in% c("Pmax", "Rd")) |>
+  separate(yearname, sep = "r", into = c("y", "year")) |>
+  mutate(year = as.numeric(year)) |>
+  select(Year = year, Estimate, param_type) |>
+  pivot_wider(names_from = param_type, values_from = Estimate)
+
+# Combine with raw averages
+Year_Averages_PP <- Year_Averages_PP |>
+  full_join(PRValues, by = "Year") |>
+  mutate(Rd = -Rd) # Make Rd positive
+
+# Calculate Bayesian R²
+pi_curve_r2 <- median(bayes_R2(fit1_f)[, 1])
+cat(sprintf("\nPhotosynthesis-Irradiance Curve Model:\n"))
+cat(sprintf("  Bayesian R²: %.3f\n", pi_curve_r2))
+cat(sprintf("  This indicates the model explains %.1f%% of variance in net production\n", pi_curve_r2 * 100))
+
+write_csv(Year_Averages_PP, here("Data", "Year_Averages_PP.csv"))
+```
+
+## 6. Integrate All Datasets
+
+```{r integrate-data}
+#| label: integrate-datasets
+
+# Read processed data files
+Year_Averages_PP <- read_csv(here("Data", "Year_Averages_PP.csv"))
+Turb <- read_csv(here("Data", "Turb_mean.csv"))
+water <- read_csv(here("Data", "Water_N_mean.csv"))
+insitu_temp <- read_csv(here("Data", "InSituTemp.csv"))
+
+fish_trophic <- read_csv(here("Data", "fish_summary.csv")) |>
+  pivot_wider(names_from = trophic_new, values_from = fish_g_m2) |>
+#  mutate(fish_total = rowSums(across(Corallivore:Other))) |>
+  select(-Other) |>
+  full_join(fish_respiration)
+
+Benthic_summary_Algae <- read_csv(here("Data", "Benthic_summary_algae.csv"))
+
+# Create integrated dataset
+Year_Averages <- Year_Averages_PP |>
+  select(-c(NP_max:R_SE))|>
+  full_join(TotalLiving |> filter(Site == "LTER 1"), by = "Year") |>
+  full_join(water) |>
+  full_join(Turb, by = "Year") |>
+  full_join(insitu_temp, by = "Year") |>
+  full_join(fish_trophic, by = "Year") |>
+  mutate(log_coral = log(mean_coral)) |>
+  mutate(coral_dominance = log(mean_coral/mean_fleshy))|>
+  filter(Year < 2026) |>
+  mutate(benthic_R = Rd - Rfish_field_mmolO2_m2_h) |> # total R - fish R
+  arrange(Year)
+
+# Display structure
+glimpse(Year_Averages)
+```
+
+
+---
+
+# Figures
+
+## Benthic Community Composition
+
+```{r benthic-plot}
+#| label: fig-benthic
+#| cache: false
+#| fig-cap: "**Figure 1.** Benthic community composition at LTER Site 1 backreef (2005–2025)."
+#| fig-width: 10
+#| fig-height: 6
+
+# Define color palette
+myPal <- c(
+  Coral                        = "#c38370",
+  `Fleshy Macroalgae and Turf` = "#9da993",
+  `Crustose Corallines`        = "#523a28",
+  Other                        = "#bdc3cb",
+  Sand                         = "#d6ad60"
+)
+
+# Create stacked area plot
+fig1 <- Benthic_summary_Algae |>
+  mutate(name = factor(name, levels = c(
+    "Coral", "Fleshy Macroalgae and Turf",
+    "Crustose Corallines", "Sand", "Other"
+  ))) |>
+  filter(Site == "LTER 1") |>
+  ggplot(aes(x = Year, y = mean_cover, fill = name)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = myPal) +
+  labs(
+    fill = "",
+    y = "% Cover"
+  ) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.position = "bottom"
+  )
+
+ggsave(
+  here("Output", "fig1_benthic_cover.pdf"),
+  plot   = fig1,
+  width  = 10,
+  height = 6
+)
+
+fig1
+```
+```{r}
+#| label: fig-R-fish-benthic
+#| cache: false
+#| fig-cap: "**Supplemental Figure 1.** Relative contribution of fish to total Rd."
+#| fig-width: 10
+#| fig-height: 6
+
+FigS1 <- Year_Averages |>
+  select(Year, Rd, Rfish_field_mmolO2_m2_h) |>
+  drop_na() |>
+  mutate(fish_pct = 100 * Rfish_field_mmolO2_m2_h / (Rd + Rfish_field_mmolO2_m2_h)) |>
+  ggplot(aes(x = Year, y = fish_pct)) +
+  geom_line(color = "#E69F00", linewidth = 1.1) +
+  geom_point(color = "#E69F00", size = 2.4) +
+  expand_limits(y = 0) +
+  labs(
+    y = "Fish contribution to total Rd (%)"
+  ) +
+  scale_x_continuous(breaks = scales::breaks_pretty()) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+ggsave(
+  here("Output", "figSupp1_fish_R.pdf"),
+  plot   = FigS1,
+  width  = 10,
+  height = 6
+)
+
+FigS1
+```
+
+
+
+## Temporal Trends
+
+Assess standardized change per year using Bayesian linear models.
+
+```{r temporal-trends}
+#| label: temporal-trends
+#| cache: true
+#| dependson: ["integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
+
+# Create standardized dataset
+std_data <- Year_Averages |>
+  select(
+    mean_coral, mean_fleshy, Pmax, Rd, N_percent,
+    Herbivores, Corallivore,fish_biomass_g_m2, NP_mean, Max_temp, 
+    Nitrite_and_Nitrate, Phosphate
+  ) |>
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) |>
+  bind_cols(Year_Averages |> select(Year))
+
+# Fit Bayesian models for each variable and extract R²
+fit_temporal_model <- function(response_var, param_name) {
+  form <- as.formula(paste(response_var, "~ Year"))
+  mod <- brm(form, data = std_data, silent = 2, refresh = 0, seed = 223)
+  
+  # Extract posterior samples
+  post <- as_tibble(as.matrix(mod)) |>
+    select(Year = b_Year) |>
+    mutate(Parameter = param_name)
+  
+  # Calculate Bayesian R²
+  r2 <- median(bayes_R2(mod)[, 1])
+  
+  # Store model for later R² extraction
+  list(posterior = post, model = mod, r2 = r2, param = param_name)
+}
+
+# Fit all models
+temporal_models <- list(
+  fit_temporal_model("mean_coral", "% Coral Cover"),
+  fit_temporal_model("mean_fleshy", "% Fleshy Macroalgae and Turf Cover"),
+  fit_temporal_model("Corallivore", "Corallivore"),
+  fit_temporal_model("Herbivores", "Herbivore/Bioeroding Fish"),
+  fit_temporal_model("fish_biomass_g_m2", "Total Fish Biomass"),
+  fit_temporal_model("N_percent", "%N Content"),
+  fit_temporal_model("Rd", "Ecosystem Respiration"),
+  fit_temporal_model("Pmax", "Maximum Photosynthetic Capacity"),
+  fit_temporal_model("NP_mean", "Net Ecosystem Production"),
+  fit_temporal_model("Max_temp", "Max Temperature"),
+  fit_temporal_model("Nitrite_and_Nitrate", "Nitrate + Nitrite")
+)
+
+# Extract posteriors for plotting
+temporal_results <- temporal_models |>
+  map_df(~.x$posterior)
+
+# Print R² values
+cat("\n=== Temporal Trend Model Performance (Bayesian R²) ===\n\n")
+temporal_models |>
+  map_df(~tibble(Parameter = .x$param, R2 = .x$r2)) |>
+  arrange(desc(R2)) |>
+  print(n = Inf)
+```
+
+```{r temporal-plot}
+#| label: fig-temporal
+#| cache: false
+#| fig-cap: "**Figure 2.** Bayesian temporal trends for each variable."
+#| fig-width: 8.2
+#| fig-height: 11.81
+
+# Noto Sans has full Unicode coverage (superscripts, µ, °, subscripts)
+font_add_google("Noto Sans", family = "noto")
+showtext_auto()
+
+theme_nature <- function(base_size = 10) {
+  theme_classic(base_size = base_size) +
+    theme(
+      text             = element_text(family = "noto"),
+      axis.text        = element_text(size = base_size, color = "black"),
+      axis.title       = element_text(size = base_size),
+      axis.line        = element_line(linewidth = 0.35, color = "black"),
+      axis.ticks       = element_line(linewidth = 0.35, color = "black"),
+      strip.background = element_blank(),
+      strip.text       = element_text(size = 10, face = "plain", color = "grey20"),
+      panel.spacing    = unit(0.5, "lines"),
+      legend.position  = "none",
+      plot.tag         = element_text(face = "bold", size = 10)
+    )
+}
+
+col_inc <- "#E64B35"   # NPG red  — increasing
+col_dec <- "#4DBBD5"   # NPG teal — decreasing
+
+# ── Summarise posterior slopes (order + color mapping) ─────────────────────
+slope_summary <- temporal_results |>
+  group_by(Parameter) |>
+  summarise(
+    median_slope = median(Year),
+    direction    = if_else(median_slope > 0, "Increasing", "Decreasing"),
+    .groups = "drop"
+  ) |>
+  arrange(median_slope)
+
+param_levels <- slope_summary$Parameter
+
+# ── Scale parameters — defined here so they are available to both panels ────
+short_label_map <- tibble(
+  var = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores",
+          "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate", "fish_biomass_g_m2"),
+  Parameter = c("% Coral Cover", "% Fleshy Macroalgae and Turf Cover", "Corallivore",
+                "Herbivore/Bioeroding Fish", "%N Content", "Ecosystem Respiration",
+                "Maximum Photosynthetic Capacity", "Net Ecosystem Production",
+                "Max Temperature", "Nitrate + Nitrite", "Total Fish Biomass"),
+  label = c(
+    "Coral cover\n(%)",
+    "Fleshy Macroalgae and Turf\n(%)",
+    "Corallivore\n(g m\u207b\u00b2)",
+    "Herbivores\n(g m\u207b\u00b2)",
+    "N content\n(%)",
+    "Respiration\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Pmax\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "NEP\n(mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9)",
+    "Max temperature\n(\u00b0C)",
+    "Nitrate+nitrite\n(\u00b5mol L\u207b\u00b9)",
+    "All Fish\n(g m\u207b\u00b2)"
+  )
+)
+
+scale_params <- tibble(
+  var = short_label_map$var,
+  mu  = map_dbl(short_label_map$var, \(x) mean(Year_Averages[[x]], na.rm = TRUE)),
+  sd  = map_dbl(short_label_map$var, \(x) sd(Year_Averages[[x]],   na.rm = TRUE))
+) |>
+  left_join(short_label_map, by = "var")
+
+label_levels <- scale_params$label[match(param_levels, scale_params$Parameter)]
+
+# Short names for panel a y-axis (strip units line from panel b labels)
+short_name_map <- scale_params |>
+  select(Parameter, label) |>
+  mutate(short_name = str_remove(label, "\n.*"))
+
+# ── Panel a: Posterior density ridges ──────────────────────────────────────
+panel_a <- temporal_results |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(short_name_map, by = "Parameter") |>
+  mutate(short_name = factor(short_name, levels = short_name_map$short_name[match(param_levels, short_name_map$Parameter)])) |>
+  ggplot(aes(x = Year, y = short_name, fill = direction)) +
+  geom_vline(
+    xintercept = 0, linetype = "dashed",
+    linewidth = 0.35, color = "grey55"
+  ) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.025, 0.975),
+    alpha = 0.75, linewidth = 0.25, color = "white",
+    scale = 0.88, rel_min_height = 0.01
+  ) +
+  scale_fill_manual(values = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+  # Directional indicators via geom_segment — no Unicode font dependency
+  annotate("segment",
+           x = 0.02, xend = 0.26, y = 0.38, yend = 0.38,
+           arrow = arrow(length = unit(0.15, "cm"), ends = "last", type = "closed"),
+           color = col_inc, linewidth = 0.6) +
+  annotate("text", x = 0.035, y = 0.38, label = "Increasing",
+           hjust = 0, vjust = -0.4, size = 3.5,
+           color = col_inc, fontface = "italic", family = "noto") +
+  annotate("segment",
+           x = -0.02, xend = -0.26, y = 0.38, yend = 0.38,
+           arrow = arrow(length = unit(0.15, "cm"), ends = "last", type = "closed"),
+           color = col_dec, linewidth = 0.6) +
+  annotate("text", x = -0.035, y = 0.38, label = "Decreasing",
+           hjust = 1, vjust = -0.4, size = 3.5,
+           color = col_dec, fontface = "italic", family = "noto") +
+  labs(x = "Standardized change per year", y = NULL, tag = "A") +
+  lims(x = c(-0.35, 0.35)) +
+  coord_cartesian(clip = "off") +
+  theme_nature() +
+  theme(
+    axis.text.y  = element_text(size = 10),
+    # Left margin wide enough for the longest ridge y-axis label
+    plot.margin  = margin(5, 5, 5, 45, unit = "pt")
+  )
+
+# Pull fitted values and raw data from each Bayesian trend model and
+# back-transform from z-scores to original measurement units for plotting.
+get_time_series <- function(model_obj) {
+  mod      <- model_obj$model
+  param    <- model_obj$param
+  resp_var <- as.character(formula(mod)$formula)[2]
+  # Limit fitted predictions to the years actually observed for this
+  # parameter (some series have missing tail years, e.g. N+N ends 2018),
+  # so prediction lines don't extrapolate past the data
+  year_seq <- tibble(Year = seq(min(std_data$Year[!is.na(std_data[[resp_var]])]),
+                                max(std_data$Year[!is.na(std_data[[resp_var]])]),
+                                by = 0.5))
+  fitted_df <- fitted(mod, newdata = year_seq) |>
+    as_tibble() |>
+    bind_cols(year_seq) |>
+    mutate(Parameter = param)
+  raw_df <- std_data |>
+    select(Year, value = all_of(resp_var)) |>
+    mutate(Parameter = param)
+  list(fitted = fitted_df, raw = raw_df)
+}
+
+all_series <- map(temporal_models, get_time_series)
+
+fitted_all <- map_df(all_series, ~.x$fitted) |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(scale_params |> select(Parameter, mu, sd, label), by = "Parameter") |>
+  mutate(
+    Estimate_orig = Estimate * sd + mu,
+    Q2.5_orig     = Q2.5    * sd + mu,
+    Q97.5_orig    = Q97.5   * sd + mu,
+    label = factor(label, levels = label_levels)
+  )
+
+raw_all <- map_df(all_series, ~.x$raw) |>
+  left_join(slope_summary |> select(Parameter, direction), by = "Parameter") |>
+  left_join(scale_params |> select(Parameter, mu, sd, label), by = "Parameter") |>
+  mutate(
+    value_orig = value * sd + mu,
+    label = factor(label, levels = label_levels)
+  )
+
+# ── Bayesian R² annotations ─────────────────────────────────────────────────
+r2_df <- map_df(temporal_models, ~tibble(Parameter = .x$param, r2 = .x$r2)) |>
+  left_join(scale_params |> select(Parameter, label), by = "Parameter") |>
+  mutate(
+    label    = factor(label, levels = label_levels),
+    r2_label = paste0("R\u00b2 = ", round(r2, 2))
+  )
+
+# ── Y-axis labels via expression(atop()) — reliable across all PDF fonts ─────
+# ── Y-axis labels: single-line expressions ───────────────────────────────────
+# Single-line keeps the rotated title height ≈ font size (~10 pt) vs two-line
+# atop() which doubles it, causing excess gap between label and plot area.
+yaxis_labels <- list(
+  "% Coral Cover"                   = "Coral cover (%)",
+  "% Fleshy Macroalgae and Turf Cover" = "Fleshy Macroalgae and Turf (%)",
+  "Corallivore"                     = expression("Corallivore (g m"^-2*")"),
+  "Herbivore/Bioeroding Fish"       = expression("Herbivores (g m"^-2*")"),
+  "%N Content"                      = "N content (%)",
+  "Ecosystem Respiration"           = expression("Rd (mmol O"[2]*" m"^-2*" h"^-1*")"),
+  "Maximum Photosynthetic Capacity" = expression("Pmax (mmol O"[2]*" m"^-2*" h"^-1*")"),
+  "Net Ecosystem Production"        = expression("NEP (mmol O"[2]*" m"^-2*" h"^-1*")"),
+  "Max Temperature"                 = "Max temp. (\u00b0C)",
+  "Nitrate + Nitrite"               = expression("N+N (\u00b5mol L"^-1*")"),
+  "Total Fish Biomass"              = expression("All Fish (g m"^-2*")")
+)
+
+# ── Individual panels B–K ─────────────────────────────────────────────────────
+# show_xticks: TRUE only for bottom row (J, K = positions 9–10)
+make_ts_panel <- function(param_name, letter, show_xticks = FALSE) {
+  fd <- fitted_all |> filter(Parameter == param_name)
+  rd <- raw_all    |> filter(Parameter == param_name)
+  r2 <- r2_df      |> filter(Parameter == param_name)
+
+  ggplot() +
+    geom_ribbon(data = fd,
+      aes(x = Year, ymin = Q2.5_orig, ymax = Q97.5_orig, fill = direction),
+      alpha = 0.18) +
+    geom_line(data = fd,
+      aes(x = Year, y = Estimate_orig, color = direction),
+      linewidth = 0.55) +
+    geom_point(data = rd, aes(x = Year, y = value_orig),
+      size = 0.85, alpha = 0.70, shape = 16, color = "grey25") +
+    geom_text(data = r2, aes(label = r2_label),
+      x = -Inf, y = Inf, hjust = -0.1, vjust = 1.4,
+      size = 3.5, color = "grey45", fontface = "italic", family = "noto") +
+    scale_fill_manual(values  = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+    scale_color_manual(values = c("Increasing" = col_inc, "Decreasing" = col_dec)) +
+    scale_x_continuous(breaks = c(2008, 2014, 2020)) +
+    labs(x = NULL, y = yaxis_labels[[param_name]], tag = letter) +
+    theme_nature() +
+    theme(
+      axis.text.x = if (show_xticks)
+                      element_text(angle = 45, hjust = 1, size = 10)
+                    else
+                      element_blank(),
+      axis.ticks.x        = if (show_xticks) element_line() else element_blank(),
+      axis.text.y         = element_text(size = 10, margin = margin(r = 1, unit = "pt")),
+      axis.title.y        = element_text(margin = margin(r = 1, unit = "pt")),
+      axis.ticks.length.y = unit(0.1, "cm"),
+      plot.tag.position   = c(0.04, 0.96),
+      plot.tag            = element_text(face = "bold", size = 10, hjust = 0, vjust = 1),
+      plot.margin         = margin(5, 5, 5, 2, unit = "pt")
+    )
+}
+
+ts_panels_all <- pmap(
+  list(param_levels, LETTERS[2:12], seq_along(param_levels) > 8),
+  \(p, l, show) make_ts_panel(p, l, show_xticks = show)
+)
+
+# Equalize panel sizes by aligning left and right columns separately.
+# align_plots(align = "v", axis = "l") pads the narrower y-axis areas within
+# each column to match the widest, so all panels in a column have equal data-area
+# widths. Columns are aligned independently to avoid over-padding.
+left_aligned  <- cowplot::align_plots(
+  plotlist = ts_panels_all[c(1, 3, 5, 7, 9)],  # B D F H J
+  align = "v", axis = "l"
+)
+right_aligned <- cowplot::align_plots(
+  plotlist = ts_panels_all[c(2, 4, 6, 8, 10)],  # C E G I K
+  align = "v", axis = "l"
+)
+
+all_aligned <- vector("list", 10)
+all_aligned[c(1, 3, 5, 7, 9)]  <- left_aligned
+all_aligned[c(2, 4, 6, 8, 10)] <- right_aligned
+
+panel_b <- cowplot::plot_grid(plotlist = all_aligned, ncol = 2, align = "none")
+
+# ── Combine and render ───────────────────────────────────────────────────────
+# Heights ratio 1:3.3 ≈ Panel A (~70 mm ridge) : Panel B (5 rows × ~46 mm)
+fig7 <- panel_a / wrap_elements(panel_b) +
+  plot_layout(heights = c(1, 3.3)) &
+  theme(plot.background = element_blank())
+
+fig7
+
+ggsave(
+  here("Output", "fig2_temporal_trends.pdf"),
+  plot   = fig7,
+  width  = 183,
+  height = 300,
+  units  = "mm",
+  device = cairo_pdf
+)
+```
+
+
+### Temporal Rates of Change (Natural Scale)
+
+```{r temporal-rate-table}
+#| label: tbl-temporal-rates
+#| cache: false
+#| tbl-cap: "**Annual rates of change on the natural scale for each measured ecosystem parameter at MCR LTER Site 1 backreef, 2005–2025.**"
+
+# Units lookup (natural-scale units per year for each variable)
+units_map_doc <- tibble(
+  var   = c("mean_coral", "mean_fleshy", "Corallivore", "Herbivores","fish_biomass_g_m2",
+            "N_percent", "Rd", "Pmax", "NP_mean", "Max_temp", "Nitrite_and_Nitrate"),
+  Units = c("% cover yr\u207b\u00b9", "% cover yr\u207b\u00b9",
+            "g m\u207b\u00b2 yr\u207b\u00b9", "g m\u207b\u00b2 yr\u207b\u00b9","g m\u207b\u00b2 yr\u207b\u00b9",
+            "% N yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9 yr\u207b\u00b9",
+            "\u00b0C yr\u207b\u00b9", "\u00b5mol L\u207b\u00b9 yr\u207b\u00b9")
+)
+
+# Summarise posterior slopes from temporal_results into median + 95% CI
+slope_tbl_doc <- temporal_results |>
+  group_by(Parameter) |>
+  summarise(
+    median_std = median(Year),
+    lo95_std   = quantile(Year, 0.025),
+    hi95_std   = quantile(Year, 0.975),
+    .groups    = "drop"
+  )
+
+slope_tbl_doc |>
+  left_join(scale_params |> select(Parameter, sd, var), by = "Parameter") |>
+  left_join(units_map_doc, by = "var") |>
+  mutate(
+    natural_slope = median_std * sd,
+    natural_lo95  = lo95_std  * sd,
+    natural_hi95  = hi95_std  * sd,
+    credible      = sign(lo95_std) == sign(hi95_std),
+    Rate = sprintf("%.3g (%s, %s)%s",
+                   natural_slope,
+                   formatC(natural_lo95, digits = 2, format = "g"),
+                   formatC(natural_hi95, digits = 2, format = "g"),
+                   if_else(credible, "\u2020", "")),
+    Direction = if_else(median_std > 0, "\u2191 Increasing", "\u2193 Decreasing")
+  ) |>
+  arrange(median_std) |>
+  select(Parameter, Units, `Rate (95% CI)` = Rate, Direction) |>
+  kbl(align = c("l", "l", "r", "c")) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width        = FALSE,
+    position          = "left"
+  ) |>
+  footnote(
+    general       = "\u2020 95% credible interval excludes zero.",
+    general_title = ""
+  )
+```
+### Add lagged data for SEMs
+
+```{r lagged-covariates}
+#| label: lagged-covariates
+
+# Add 1-year-lagged covariates for use in the SEMs. lag() operates on row
+# order, so Year is arranged first to guarantee correct alignment.
+Year_Averages <- Year_Averages |>
+  arrange(Year) |>
+  mutate(
+    Herbivores_lag1  = lag(Herbivores),
+    Corallivore_lag1 = lag(Corallivore),
+    Max_temp_lag1    = lag(Max_temp)
+  )
+
+
+```
+
+
+## Structural Equation Modeling
+
+Fit a Bayesian SEM to understand causal pathways among ecosystem components.
+| # | Equation |
+|---|----------|
+| 1 | Temperature ~ Year |
+| 2 | log(coral cover) \| trunc(ub = 3.39) ~ temperature + yearresid |
+| 3 | log(ecosystem respiration) ~ log(coral cover) + temperature |
+| 4 | log(fleshy macroalgae) \| trunc(ub = 2.26) ~ log(coral cover) |
+| 5 | log(Pmax) ~ log(coral cover) + temperature + log(ecosystem respiration) |
+| 6 | corallivore biomass ~ log(coral cover) |
+| 7 | herbivore biomass ~ log(fleshy macroalgae) |
+| 8 | log(nitrogen content) ~ log(ecosystem respiration) |
+
+
+
+
+All continuous responses were log-transformed and z-score standardised before modelling. The `yearresid` predictor is the residual of calendar year regressed on maximum annual temperature. Because calendar year is correlated with many concurrent processes (e.g., the 2010 *Acanthaster* outbreak and subsequent dynamics, shifts in fishing pressure, ocean acidification, and any undetected observer or sampling effects), `yearresid` represents an unresolved bundle of secular non-thermal pressures operating over 2005–2025 and cannot be attributed to any single mechanism. Cover responses were upper-truncated at the z-log scale equivalent of 100% cover to respect the biological ceiling; truncation values (3.39 for coral, 2.26 for fleshy macroaglae and turf algae) were verified to back-transform to exactly 100%.
+
+Missing predictor values (ecosystem respiration and temperature as predictors of Pmax; ecosystem respiration as predictor of N content) were handled via **brms** integrated missing-data imputation (`mi()` syntax). Priors were weakly informative: regression coefficients ~ Normal(0, 2); intercepts ~ Normal(0, 2); residual SDs ~ Normal$_+$(0, 0.25) for the temperature sub-model and Normal$_+$(0, 2) otherwise.
+
+### Temporal autocorrelation in the coral sub-model
+
+The coral sub-model included a first-order autoregressive residual structure, specified as `ar(time = Year, p = 1)` within the **brms** formula. The AR(1) coefficient φ received a weakly informative Normal(0, 0.5) prior (the default in **brms**); all structural regression coefficients retained Normal(0, 2) priors. AR(1) was applied only to the coral sub-model because coral cover residuals showed the strongest temporal dependence; other residual series were inspected but showed weaker patterns. Three chains ran for 10,000 iterations (5,000 warmup) with adapt_delta = 0.99 and max_treedepth = 15. Convergence was assessed via Rhat (< 1.01 for all parameters), bulk and tail effective sample sizes (> 1,000), and posterior predictive checks.
+
+
+```{r sem-prep}
+#| label: sem-preparation
+
+# yearresid is the residual of calendar year after removing the temperature
+# trend. It captures everything else that changed systematically over 20 years
+# beyond warming — things like the 2010 Acanthaster outbreak, gradual shifts
+# in fishing pressure, ocean acidification, and any other unmeasured secular
+# drivers. It is deliberately a bundle of unresolved processes; we can't
+# attribute it to any single mechanism, but including it prevents omitted-
+# variable bias in the coral sub-model.
+yearresid <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
+
+# Prepare scaled SEM data 
+semdata2 <- Year_Averages |>
+  mutate(
+    logfleshy = log(mean_fleshy),
+    logrd = log(Rd),
+    logpmax = log(Pmax), 
+    logproducers = log(mean_alive),
+    N_percent = log(N_percent),
+    yearresid = yearresid
+  ) |>
+  select(
+    Year, meancoral = mean_coral, logproducers, meanfleshy = mean_fleshy,
+    temperature = Max_temp, flow = Flow_mean, Npercent = N_percent,
+    logrd, logpmax, logcoral = log_coral, logfleshy, Corallivore,
+    herbs = Herbivores, yearresid
+  ) |>
+  drop_na(logcoral) |>
+  mutate(across(everything(), ~ as.numeric(scale(.x))))
+```
+
+```{r sem-fit}
+#| label: sem-model
+#| cache: true
+#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
+
+# Define SEM structure
+bf_temp <- bf(temperature | mi() ~ 1 + Year)
+bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid +
+                     ar(time = Year, p = 1))
+bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature) + mi(logrd)) ####
+bf_logrd <- bf(logrd | mi() ~ 1 + logcoral + mi(temperature))
+bf_herbs <- bf(herbs | mi() ~ 1 + logfleshy)
+bf_corallivore <- bf(Corallivore | mi() ~ 1 + logcoral)
+bf_fleshy <- bf(logfleshy | trunc(ub = 2.26) ~ logcoral)
+bf_nutrients <- bf(Npercent | mi() ~ 1 + mi(logrd))
+
+# Fit the full Bayesian SEM. The key structural choice is the AR(1) term on
+# the coral sub-model — coral cover has strong year-to-year memory (a bad
+# bleaching year affects the next 5–10 years), and without AR(1) the credible
+# intervals on the temperature→coral path would be overconfident. We only
+# apply it to coral because the other sub-models showed much weaker residual
+# autocorrelation. The trunc(ub = ...) terms cap cover at 100% on the log
+# scale to respect the biological ceiling. 
+brms_sem_full <- brm(
+  bf_temp + bf_coraltemp + bf_logrd + bf_herbs + bf_corallivore +
+    bf_nutrients + bf_fleshy + bf_logpmax + set_rescor(FALSE),
+  data = semdata2,
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 11,
+  sample_prior = "no",
+  prior = c(
+    # b-class priors per response (only for responses that have non-mi() predictors)
+    # Npercent is excluded: its only predictor is mi(logrd) → class bsp, not b
+    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "b", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
+    # Intercept priors for all responses
+    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
+    # Response-specific essential priors
+    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
+    set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
+  ),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  family = gaussian(),
+  silent = 2,
+  refresh = 0
+)
+```
+
+```{r sem-summary}
+#| label: sem-results
+
+summary(brms_sem_full)
+```
+
+```{r}
+#| label: sem-r2-calculation
+
+# Calculate Bayesian R² for each response variable in the SEM
+# Note: Some responses with missing data imputation may have NaN - filter these out
+sem_r2 <- bayes_R2(brms_sem_full, summary = FALSE)
+sem_r2_summary <- apply(sem_r2, 2, median, na.rm = TRUE)
+
+# Remove NaN values
+sem_r2_valid <- sem_r2_summary[!is.na(sem_r2_summary)]
+
+cat("\n=== Structural Equation Model: Bayesian R² by Response ===\n\n")
+sem_r2_df <- tibble(
+  Response = names(sem_r2_valid),
+  R2 = sem_r2_valid
+) |>
+  mutate(Response = case_when(
+    Response == "R2temperature" ~ "Temperature",
+    Response == "R2logcoral" ~ "Coral Cover",
+    Response == "R2logpmax" ~ "Ecosystem Pmax",
+    Response == "R2logrd" ~ "Ecosystem Rd",
+    Response == "R2herbs" ~ "Herbivorous Fish",
+    Response == "R2Corallivore" ~ "Corallivore Fish",
+    Response == "R2logfleshy" ~ "Fleshy Macroalgae and Turf",
+    Response == "R2Npercent" ~ "N Content",
+    TRUE ~ Response
+  )) |>
+  arrange(desc(R2))
+
+print(sem_r2_df, n = Inf)
+
+cat("\n")
+cat(sprintf("Mean R² across computable responses: %.3f\n", mean(sem_r2_valid)))
+cat(sprintf("The SEM explains between %.1f%% and %.1f%% of variance across responses.\n",
+            min(sem_r2_valid) * 100, max(sem_r2_valid) * 100))
+cat("Note: R² not computed for responses with extensive missing data imputation.\n")
+```
+
+## SEM Conceptual Model
+
+```{r sem-dag}
+#| label: fig-sem-dag
+#| cache: false
+#| fig-cap: "**Figure 3.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM)."
+#| fig-width: 9
+#| fig-height: 4.2
+
+pos_col  <- "#1565C0"
+neg_col  <- "#B71C1C"
+nsig_col <- "#AAAAAA"
+
+
+dag_nodes <- tribble(
+  ~id,           ~label,                    ~x,    ~y,    ~fill,       ~border,
+  "Year",        "Year",                    0.4,   3.5,   "white",     "#888888",
+  "Temp",        "Temperature",             2.0,   3.0,   "white",     "#888888",
+  "Coral",       "Coral\nCover",            3.8,   3.0,   "#E8F5E9",   "#2E7D32",
+  # Ecosystem function: Rd and Pmax in horizontal row; N elevated above
+  "Rd",          "Ecosystem\nRespiration",  5.6,   4.0,   "#EDE7F6",   "#4527A0",
+  "N",           "N\nStock",               7.4,   5.0,   "#FFF8E1",   "#E65100",
+  "Pmax",        "Ecosystem\nPmax",         9.2,   4.0,   "#EDE7F6",   "#4527A0",
+  # Community composition row
+  "Algae",       "Fleshy\nAlgae",           5.6,   2.0,   "#E8F5E9",   "#2E7D32",
+  "Herbs",       "Herbivore\nFish",         7.4,   2.0,   "#E3F2FD",   "#0D47A1",
+  "Corallivore", "Corallivore\nFish",       9.2,   2.0,   "#E3F2FD",   "#0D47A1"
+)
+
+dag_edges <- tribble(
+  ~from,   ~to,           ~est,   ~sig,  ~loff_x, ~loff_y,
+  "Year",  "Temp",        0.464,  TRUE,   0.28,    0.18,
+  "Temp",  "Coral",      -0.559,  TRUE,   0.00,    0.24,
+  "Temp",  "Rd",          0.213,  FALSE, -0.35,    0.24,
+  "Temp",  "Pmax",       -0.152,  FALSE, -0.75,   -0.22,
+  "Coral", "Rd",          1.075,  TRUE,  -0.08,    0.24,
+  "Coral", "Algae",      -0.659,  TRUE,  -0.08,   -0.24,
+  "Coral", "Corallivore", 0.664,  TRUE,   0.38,   -0.20,
+  "Coral", "Pmax",       -0.336,  FALSE,  0.38,    0.20,
+  "Rd",    "N",           0.621,  TRUE,  -0.18,    0.22,   # short diagonal up-right
+  "Rd",    "Pmax",        0.809,  TRUE,   0.00,    0.24,   # straight horizontal below N
+  "Algae", "Herbs",       0.540,  TRUE,   0.00,    0.24    # straight horizontal
+) |>
+  mutate(direction = if_else(est >= 0, "pos", "neg"), abs_est = abs(est)) |>
+  left_join(dag_nodes |> select(id, x, y) |> rename(from = id, x0 = x, y0 = y), by = "from") |>
+  left_join(dag_nodes |> select(id, x, y) |> rename(to   = id, x1 = x, y1 = y), by = "to") |>
+  mutate(mx = (x0 + x1) / 2, my = (y0 + y1) / 2, lbl = sprintf("%.2f", est))
+
+# All edges are straight — no geom_curve needed
+dag_arr <- arrow(length = unit(3.0, "mm"), type = "closed")
+
+fig3 <- ggplot() +
+  # Faint region backgrounds
+  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 3.2, ymax = 5.65,
+           fill = "#EDE7F6", alpha = 0.18, color = NA) +
+  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 1.2, ymax = 2.75,
+           fill = "#E3F2FD", alpha = 0.18, color = NA) +
+  # Region labels
+  annotate("text", x = 10.12, y = 4.5, label = "Ecosystem\nfunction",
+           hjust = 0, size = 2.6, color = "#6A1B9A", fontface = "italic", lineheight = 0.9) +
+  annotate("text", x = 10.12, y = 2.0, label = "Community\ncomposition",
+           hjust = 0, size = 2.6, color = "#1565C0", fontface = "italic", lineheight = 0.9) +
+  # Significant edges
+  geom_segment(data = filter(dag_edges,  sig),
+    aes(x = x0, y = y0, xend = x1, yend = y1, color = direction, linewidth = abs_est),
+    alpha = 0.82, arrow = dag_arr, lineend = "butt") +
+  # Non-significant edges — reduced alpha to de-emphasise
+  geom_segment(data = filter(dag_edges, !sig),
+    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
+    color = nsig_col, alpha = 0.45, arrow = dag_arr, lineend = "butt") +
+  geom_label(data = filter(dag_edges,  sig),
+    aes(x = mx + loff_x, y = my + loff_y, label = lbl, color = direction),
+    size = 2.8, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
+  geom_label(data = filter(dag_edges, !sig),
+    aes(x = mx + loff_x, y = my + loff_y, label = lbl),
+    color = nsig_col, size = 2.8, fontface = "bold", fill = "white",
+    label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
+  # Node boxes
+  {lapply(seq_len(nrow(dag_nodes)), function(i) {
+    nd <- dag_nodes[i, ]
+    geom_label(data = nd, aes(x = x, y = y, label = label),
+               fill = nd$fill, color = nd$border, size = 3.0,
+               fontface = "bold", lineheight = 0.9, label.size = 0.65,
+               label.padding = unit(0.38, "lines"), label.r = unit(4, "pt"),
+               show.legend = FALSE)
+  })} +
+  scale_color_manual(values = c("pos" = pos_col, "neg" = neg_col),
+                     labels = c("pos" = "Positive", "neg" = "Negative"),
+                     name = "Effect direction") +
+  scale_linewidth(range = c(0.6, 2.8), guide = "none") +
+  labs(caption = "Standardized β on arrows  ·  gray = 95% CI crosses zero") +
+  theme_void(base_size = 12) +
+  theme(
+    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 9, margin = margin(t = 6)),
+    legend.position = "bottom",
+    legend.title    = element_text(size = 10, face = "bold"),
+    legend.text     = element_text(size = 9),
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin     = margin(8, 10, 6, 10)
+  ) +
+  guides(color = guide_legend(override.aes = list(linewidth = 1.5))) +
+  coord_cartesian(xlim = c(-0.1, 11.8), ylim = c(1.35, 5.75))
+
+ggsave(
+  here("Output", "fig3_sem_dag.pdf"),
+  plot   = fig3,
+  width  = 9,
+  height = 4.2
+)
+
+fig3
+```
+
+## SEM Path Coefficients
+
+```{r sem-paths}
+#| label: fig-sem-paths
+#| cache: false
+#| fig-cap: "**Figure 4.** SEM path coefficient effect sizes."
+#| fig-width: 16
+#| fig-height: 6
+
+# Extract and format path coefficients
+gp_edges <- as_tibble(fixef(brms_sem_full)) |>
+  mutate(coef = rownames(fixef(brms_sem_full))) |>
+  separate(col = coef, into = c("resp", "pred")) |>
+  filter(pred != "Intercept") |>
+  rename(est = Estimate, lo = `Q2.5`, hi = `Q97.5`) |>
+  mutate(sig = if_else(sign(lo) == sign(hi), 1, 0.5)) |>
+  mutate(resp = case_when(
+    resp == "temperature" ~ "Temperature",
+    resp == "logfleshy" ~ "Fleshy Macroalgae and Turf",
+    resp == "logpmax" ~ "Ecosystem Pmax",
+    resp == "logrd" ~ "Ecosystem Rd",
+    resp == "herbs" ~ "Herbivorous Fish",
+    resp == "Corallivore" ~ "Corallivore Fish",
+    resp == "logcoral" ~ "Coral",
+    resp == "Npercent" ~ "N stock"
+  )) |>
+  mutate(resp = factor(resp, c(
+    "Temperature", "Coral", "Fleshy Macroalgae and Turf", "Herbivorous Fish",
+    "Corallivore Fish", "Ecosystem Rd", "Ecosystem Pmax", "N stock"
+  ))) |>
+  mutate(pred = case_when(
+    pred == "temperature" ~ "Temperature",
+    pred == "mitemperature" ~ "Temperature",
+    pred == "milogrd" ~ "Ecosystem Rd Rate",
+    pred == "logcoral" ~ "Coral Cover",
+    pred == "logfleshy" ~ "Fleshy Macroalgae and Turf Cover",
+    pred == "Year" ~ "Year",
+    pred == "yearresid" ~ "Non-Temperature Yearly Variability"
+  )) |>
+  mutate(pred = factor(pred, c(
+    "Ecosystem Rd Rate", "Fleshy Macroalgae and Turf Cover",
+    "Coral Cover", "Non-Temperature Yearly Variability",
+    "Temperature", "Year"
+  )))
+
+gp_edges |>
+  ggplot(aes(x = est, y = pred)) +
+  geom_point(size = 3, color = "firebrick", aes(alpha = sig)) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi, alpha = sig), height = 0, color = "firebrick") +
+  geom_vline(xintercept = 0) +
+  scale_alpha(range = c(0.4, 1)) +
+  labs(
+    x = "Standardized Effect Size",
+    y = "Predictor Variables"
+  ) +
+  theme_minimal() +
+  facet_wrap(~resp, nrow = 1) +
+  theme(
+    text = element_text(size = 14),
+    axis.text = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    legend.position = "none"
+  )
+
+ggsave(here("Output", "fig4_sem_paths.pdf"), width = 16, height = 6)
+```
+
+## Temperature Effects: Direct vs Indirect
+
+```{r temp-effects-data}
+#| label: temp-effects-data
+#| echo: false
+#| message: false
+#| warning: false
+#| cache: false
+
+# ── Compute direct and indirect temperature effects from SEM posteriors ────────
+# post_samples: 15,000 post-warmup draws from the full SEM
+post_samples <- as_tibble(as.matrix(brms_sem_full))
+
+# Individual path coefficient draws
+b_tc  <- post_samples$b_logcoral_temperature       # Temp → Coral (direct)
+b_cr  <- post_samples$b_logrd_logcoral             # Coral → Rd
+b_cf  <- post_samples$b_logfleshy_logcoral         # Coral → Fleshy
+b_cc  <- post_samples$b_Corallivore_logcoral       # Coral → Corallivore Fish
+b_cp  <- post_samples$b_logpmax_logcoral           # Coral → Pmax
+b_fh  <- post_samples$b_herbs_logfleshy            # Fleshy → Herbivore Fish
+b_rn  <- post_samples$bsp_Npercent_milogrd         # Rd → N Content
+b_tr  <- post_samples$bsp_logrd_mitemperature      # Temp → Rd (direct)
+b_tp  <- post_samples$bsp_logpmax_mitemperature    # Temp → Pmax (direct)
+
+n_draws <- nrow(post_samples)
+zeros   <- rep(0, n_draws)
+
+# Direct, indirect, and total effects for each response variable
+effect_specs <- list(
+  `Coral Cover`       = list(direct = b_tc,   indirect = zeros),
+  `Ecosystem Respiration`      = list(direct = b_tr,   indirect = b_tc * b_cr),
+  `Fleshy & Turf Macroalgae` = list(direct = zeros,  indirect = b_tc * b_cf),
+  `Corallivorous Fish`  = list(direct = zeros,  indirect = b_tc * b_cc),
+  `Ecosystem Pmax`    = list(direct = b_tp,   indirect = b_tc * b_cp),
+  `Herbivorous Fish`    = list(direct = zeros,  indirect = b_tc * b_cf * b_fh),
+  `N Content`         = list(direct = zeros,  indirect = b_tc * b_cr * b_rn)
+)
+
+summarise_effect <- function(samps) {
+  tibble(
+    samples     = list(samps),
+    median      = median(samps),
+    lower       = quantile(samps, 0.025),
+    upper       = quantile(samps, 0.975),
+    significant = sign(quantile(samps, 0.025)) == sign(quantile(samps, 0.975))
+  )
+}
+
+all_effects <- imap_dfr(effect_specs, function(spec, resp_name) {
+  bind_rows(
+    summarise_effect(spec$direct)               |> mutate(response = resp_name, effect_type = "Direct"),
+    summarise_effect(spec$indirect)             |> mutate(response = resp_name, effect_type = "Indirect"),
+    summarise_effect(spec$direct + spec$indirect) |> mutate(response = resp_name, effect_type = "Total")
+  )
+}) |>
+  mutate(
+    response    = factor(response,    levels = names(effect_specs)),
+    effect_type = factor(effect_type, levels = c("Direct", "Indirect", "Total"))
+  )
+```
+
+```{r temp-indirect-ranking}
+#| label: fig-temp-indirect
+#| cache: false
+#| fig-cap: "**Figure 5.** Indirect effects of temperature mediated through coral cover."
+#| fig-width: 8
+#| fig-height: 6
+
+# Extract only indirect effects and rank them
+indirect_effects <- all_effects |>
+  filter(effect_type == "Indirect") |>
+  # Remove coral (no indirect effect)
+  filter(response != "Coral Cover") |>
+  arrange(median) |>
+  mutate(
+    response = fct_reorder(response, median),
+    direction = if_else(median < 0, "Negative", "Positive")
+  ) 
+indirect_effects |>
+  ggplot(aes(y = response, x = median, fill = direction, alpha = significant)) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray30", linewidth = 0.5) +
+  geom_col(width = 0.7) +
+  geom_errorbarh(
+    aes(xmin = lower, xmax = upper),
+    height = 0.1,
+    linewidth = 0.8,
+    color = "gray20",
+    alpha = 0.6
+  ) +
+  scale_fill_manual(
+    values = c("Negative" = "#E64B35", "Positive" = "#4DBBD5"),
+    name = "Effect Direction"
+  ) +
+  scale_alpha_manual(
+    values = c("TRUE" = 0.9, "FALSE" = 0.2),
+    guide = "none"
+  ) +
+  labs(
+    x = "Standardized Indirect Effect Size",
+    y = ""
+  ) +
+  theme_minimal(base_size = 18) +
+  theme(
+    axis.text.y = element_text(size = 16, hjust = 1),
+    axis.text.x = element_text(size = 15),
+    axis.title.x = element_text(size = 17, margin = margin(t = 10)),
+    legend.position = "none",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 15),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(here("Output", "fig5_temp_indirect.pdf"), width = 8, height = 6)
+
+# Print a ranked summary table of the indirect effects for quick inspection
+indirect_effects |>
+  select(response, median, lower, upper, significant) |>
+  mutate(across(median:upper, ~round(.x, 3))) |>
+  arrange(median)
+```
+
+## SEM Conditional Effects
+
+```{r sem-conditional}
+#| label: fig-sem-conditional
+#| cache: false
+#| fig-cap: "**Figure 6.** Conditional effects from the Bayesian SEM."
+#| fig-width: 7.2
+#| fig-height: 9.72
+
+# Unscaling parameters
+yearresid_full <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
+
+Yearmodelvalues <- Year_Averages |>
+  mutate(
+    log_coral = log(mean_coral),
+    logfleshy = log(mean_fleshy),
+    logrd     = log(Rd),
+    logpmax   = log(Pmax),
+    N_percent = log(N_percent),
+    yearresid = yearresid_full
+  ) |>
+  select(
+    Year, meancoral = mean_coral, meanfleshy = mean_fleshy,
+    temperature = Max_temp,
+    Npercent = N_percent,
+    logrd, logpmax, logcoral = log_coral,
+    logfleshy, Corallivore, herbs = Herbivores, yearresid
+  ) |>
+  drop_na(logcoral)
+
+modelmean <- Yearmodelvalues |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
+modelsd   <- Yearmodelvalues |> summarise(across(everything(), \(x) sd(x,   na.rm = TRUE)))
+
+# ── Shared theme: 10 pt, exported at 183 × 247 mm ──────────────────────────
+base_sz <- 10
+rib_a   <- 0.25
+rib_cl  <- "#67bed9"
+ln_sz   <- 0.8
+pt_sz   <- 1.8
+
+theme_cond <- theme_classic(base_size = base_sz) +
+  theme(
+    plot.title   = element_text(size = base_sz, face = "bold"),
+    axis.title   = element_text(size = base_sz),
+    axis.text    = element_text(size = base_sz, color = "black"),
+    axis.line    = element_line(linewidth = 0.4),
+    axis.ticks   = element_line(linewidth = 0.4)
+  )
+
+# ── Row 1: Climate drivers ─────────────────────────────────────────────────
+
+temp_year <- conditional_effects(brms_sem_full, resp = "temperature", effects = "Year")
+ty_plot <- as_tibble(temp_year$temperature.temperature_Year) |>
+  mutate(
+    Year       = Year       * modelsd$Year        + modelmean$Year,
+    estimate__ = estimate__ * modelsd$temperature + modelmean$temperature,
+    lower__    = lower__    * modelsd$temperature + modelmean$temperature,
+    upper__    = upper__    * modelsd$temperature + modelmean$temperature
+  ) |>
+  ggplot(aes(x = Year, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = Year, y = Max_temp), size = pt_sz, alpha = 0.55) +
+  labs(x = "Year", y = "Temperature\n(\u00b0C)", title = "B  Year \u2192 Temperature") +
+  theme_cond
+
+coral_temp <- conditional_effects(brms_sem_full, resp = "logcoral", effects = "temperature")
+ct_plot <- as_tibble(coral_temp$logcoral.logcoral_temperature) |>
+  mutate(
+    temperature = temperature * modelsd$temperature + modelmean$temperature,
+    estimate__  = exp(estimate__ * modelsd$logcoral + modelmean$logcoral),
+    lower__     = exp(lower__    * modelsd$logcoral + modelmean$logcoral),
+    upper__     = exp(upper__    * modelsd$logcoral + modelmean$logcoral)
+  ) |>
+  ggplot(aes(x = temperature, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = Max_temp, y = exp(log_coral)), size = pt_sz, alpha = 0.55) +
+  coord_transform(y = "log") +
+  scale_y_continuous(breaks = c(1, 5, 10, 20, 40)) +
+  labs(x = "Temperature\n(\u00b0C)", y = "Coral Cover\n(%)",
+       title = "C  Temperature \u2192 Coral Cover") +
+  theme_cond
+
+# ── Row 2: Coral → benthos ─────────────────────────────────────────────────
+
+fleshy_coral <- conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral")
+fc_plot <- as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) |>
+  mutate(
+    logcoral   = exp(logcoral   * modelsd$logcoral  + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logfleshy + modelmean$logfleshy),
+    lower__    = exp(lower__    * modelsd$logfleshy + modelmean$logfleshy),
+    upper__    = exp(upper__    * modelsd$logfleshy + modelmean$logfleshy)
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log", y = "log") +
+  labs(x = "Coral Cover\n(%)", y = "Fleshy Macroalgae and Turf \n(%)",
+       title = "D  Coral Cover \u2192 Fleshy Algae") +
+  theme_cond
+
+rd_coral <- conditional_effects(brms_sem_full, resp = "logrd", effects = "logcoral")
+rc_plot <- as_tibble(rd_coral$logrd.logrd_logcoral) |>
+  mutate(
+    logcoral   = exp(logcoral   * modelsd$logcoral + modelmean$logcoral),
+    estimate__ = exp(estimate__ * modelsd$logrd    + modelmean$logrd),
+    lower__    = exp(lower__    * modelsd$logrd    + modelmean$logrd),
+    upper__    = exp(upper__    * modelsd$logrd    + modelmean$logrd)
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Rd), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log", y = "log") +
+  labs(
+    x = "Coral Cover\n(%)",
+    y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    title = "E  Coral Cover \u2192 Respiration"
+  ) +
+  theme_cond
+
+# ── Row 3: Coral → fish ────────────────────────────────────────────────────
+
+corallivore_coral <- conditional_effects(brms_sem_full, resp = "Corallivore", effects = "logcoral")
+cc_plot <- as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) |>
+  mutate(
+    logcoral   = exp(logcoral   * modelsd$logcoral    + modelmean$logcoral),
+    estimate__ = estimate__     * modelsd$Corallivore + modelmean$Corallivore,
+    lower__    = lower__        * modelsd$Corallivore + modelmean$Corallivore,
+    upper__    = upper__        * modelsd$Corallivore + modelmean$Corallivore
+  ) |>
+  ggplot(aes(x = logcoral, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Corallivore), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log") +
+  labs(
+    x = "Coral Cover\n(%)",
+    y = expression(atop("Corallivore Biomass", "(g m"^-2*")")),
+    title = "F  Coral Cover \u2192 Corallivore Fish"
+  ) +
+  theme_cond
+
+herbs_fleshy <- conditional_effects(brms_sem_full, resp = "herbs", effects = "logfleshy")
+hf_plot <- as_tibble(herbs_fleshy$herbs.herbs_logfleshy) |>
+  mutate(
+    logfleshy  = exp(logfleshy  * modelsd$logfleshy + modelmean$logfleshy),
+    estimate__ = estimate__     * modelsd$herbs     + modelmean$herbs,
+    lower__    = lower__        * modelsd$herbs     + modelmean$herbs,
+    upper__    = upper__        * modelsd$herbs     + modelmean$herbs
+  ) |>
+  ggplot(aes(x = logfleshy, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = mean_fleshy, y = Herbivores), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log") +
+  labs(
+    x = "Fleshy Macroalgae and Turf \n(%)",
+    y = expression(atop("Herbivore Biomass", "(g m"^-2*")")),
+    title = "G  Fleshy Algae \u2192 Herbivore Fish"
+  ) +
+  theme_cond
+
+# ── Row 4: Metabolism → ecosystem function ─────────────────────────────────
+
+N_Rd <- conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd")
+nr_plot <- as_tibble(N_Rd$Npercent.Npercent_logrd) |>
+  mutate(
+    logrd      = exp(logrd      * modelsd$logrd    + modelmean$logrd),
+    estimate__ = exp(estimate__ * modelsd$Npercent + modelmean$Npercent),
+    lower__    = exp(lower__    * modelsd$Npercent + modelmean$Npercent),
+    upper__    = exp(upper__    * modelsd$Npercent + modelmean$Npercent)
+  ) |>
+  ggplot(aes(x = logrd, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = Rd, y = N_percent), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log", y = "log") +
+  labs(
+    x = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    y = "Nitrogen Content\n(%)",
+    title = "H  Respiration \u2192 Algal N Content"
+  ) +
+  theme_cond
+
+rd_pmax <- conditional_effects(brms_sem_full, resp = "logpmax", effects = "logrd")
+rp_plot <- as_tibble(rd_pmax$logpmax.logpmax_logrd) |>
+  mutate(
+    logrd      = exp(logrd      * modelsd$logrd   + modelmean$logrd),
+    estimate__ = exp(estimate__ * modelsd$logpmax + modelmean$logpmax),
+    lower__    = exp(lower__    * modelsd$logpmax + modelmean$logpmax),
+    upper__    = exp(upper__    * modelsd$logpmax + modelmean$logpmax)
+  ) |>
+  ggplot(aes(x = logrd, y = estimate__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
+  geom_line(linewidth = ln_sz) +
+  geom_point(data = Year_Averages, aes(x = Rd, y = Pmax), size = pt_sz, alpha = 0.55) +
+  coord_transform(x = "log", y = "log") +
+  labs(
+    x = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    y = expression(atop("Ecosystem P"[max], "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+    title = expression(bold("I  Respiration \u2192 Ecosystem P"[max]))
+  ) +
+  theme_cond
+
+# ── Assemble 4 × 2 grid and export at 183 × 247 mm ─────────────────────────
+fig_cond <- (ty_plot | ct_plot) /
+            (fc_plot | rc_plot) /
+            (cc_plot | hf_plot) /
+            (nr_plot | rp_plot)
+
+ggsave(
+  here("Output", "fig6_sem_conditional.pdf"),
+  plot   = fig_cond,
+  width  = 183,
+  height = 247,
+  units  = "mm",
+  device = cairo_pdf
+)
+
+fig_cond
+```
+
+## Ecosystem Projections
+
+```{r cover-ceilings}
+
+# These are the upper truncation values on the z-log scale that correspond to
+# 100% benthic cover. They were calculated from the observed data and hardcoded
+# here so that projection code uses exactly the same ceiling as the SEM.
+# Both values were verified to back-transform to exactly 100% cover.
+z_ceil_coral  <- 3.39   # (log(100) - mean(log(coral%))) / sd(log(coral%))
+z_ceil_fleshy <- 2.26   # (log(100) - mean(log(fleshy%))) / sd(log(fleshy%))
+```
+
+```{r full-sem-proj-data}
+
+#| label: full-sem-proj-data
+#| echo: false
+#| message: false
+#| warning: false
+# Compute full-SEM projection matrices — needed by the reduced SEM comparison plot.
+
+# ── Projection years (standardised to SEM scale) ─────────────────────────────
+proj_years <- 2005:2055
+year_std   <- (proj_years - modelmean$Year) / modelsd$Year
+
+# 3 000 thinned posterior draws
+set.seed(7341)
+post <- as_draws_df(brms_sem_full) |>
+  as_tibble() |>
+  slice_sample(n = 3000)
+
+n <- nrow(post)
+p <- length(proj_years)
+
+# Helper: multiply each row of an (n × p) matrix by a length-n coefficient vector
+rs <- function(coef, mat) sweep(mat, 1, coef, "*")
+yr_mat <- matrix(rep(year_std, each = n), nrow = n)  # n × p
+
+# ── Propagate causal chain through the full SEM ───────────────────────────────
+# 1. Temperature (z-scored)
+temp_mat <- rs(post$b_temperature_Year, yr_mat) + post$b_temperature_Intercept
+
+# ── yearresid matrix: observed z-scaled values for hindcast (2005–2025),
+#    0 (standardised mean) for forecast years (2026–2055). yearresid captures
+#    year-specific temperature anomalies beyond the linear trend; setting it to 0
+#    for forecast years assumes future deviations are unknown and average out.
+obs_yr_actual   <- round(semdata2$Year * modelsd$Year + modelmean$Year)
+yr_resid_lookup <- tibble(Year = obs_yr_actual, yr = semdata2$yearresid)
+yr_resid_vec    <- sapply(proj_years, function(y) {
+  row <- yr_resid_lookup |> filter(Year == y)
+  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+})
+yr_resid_mat <- matrix(rep(yr_resid_vec, each = n), nrow = n)
+
+# 2. Coral cover (log-standardised; temperature + yearresid predictors)
+coral_mat <- rs(post$b_logcoral_temperature, temp_mat)    +
+             rs(post$b_logcoral_yearresid,   yr_resid_mat) +
+             post$b_logcoral_Intercept
+
+# 3. Ecosystem respiration (coral + direct temp via bsp for mi() imputed predictor)
+rd_mat <- rs(post$b_logrd_logcoral,          coral_mat) +
+          rs(post$bsp_logrd_mitemperature,   temp_mat)  +
+          post$b_logrd_Intercept
+
+# 4. Fleshy macroalgae (log-standardised; coral predictor)
+fleshy_mat <- pmin(rs(post$b_logfleshy_logcoral, coral_mat) + post$b_logfleshy_Intercept,
+                   z_ceil_fleshy)
+
+# 5. Corallivore fish (z-scored; coral predictor)
+cov_mat <- rs(post$b_Corallivore_logcoral, coral_mat) + post$b_Corallivore_Intercept
+
+# 6. Herbivore fish (z-scored; fleshy algae predictor)
+herb_mat <- rs(post$b_herbs_logfleshy, fleshy_mat) + post$b_herbs_Intercept
+
+# 7. Ecosystem Pmax (log-standardised; rd + coral + temp, all via bsp/b)
+pmax_mat <- rs(post$bsp_logpmax_milogrd,      rd_mat)    +
+            rs(post$b_logpmax_logcoral,        coral_mat) +
+            rs(post$bsp_logpmax_mitemperature, temp_mat)  +
+            post$b_logpmax_Intercept
+
+# 8. Algal N content (log-standardised; rd via bsp imputed)
+n_mat <- rs(post$bsp_Npercent_milogrd, rd_mat) + post$b_Npercent_Intercept
+
+# ── Back-transform to original units ─────────────────────────────────────────
+bt_log <- function(mat, mu, sig) exp(mat * sig + mu)
+bt_lin <- function(mat, mu, sig) mat * sig + mu
+
+proj_list <- list(
+  Temperature    = bt_lin(temp_mat,   modelmean$temperature, modelsd$temperature),
+  `Coral Cover`  = bt_log(coral_mat,  modelmean$logcoral,    modelsd$logcoral),
+  Respiration    = bt_log(rd_mat,     modelmean$logrd,       modelsd$logrd),
+  `Fleshy Algae` = bt_log(fleshy_mat, modelmean$logfleshy,   modelsd$logfleshy),
+  Pmax           = bt_log(pmax_mat,   modelmean$logpmax,     modelsd$logpmax),
+  # N_percent is log-transformed in semdata2; use explicit log-scale params
+  `N Content`    = bt_log(n_mat,
+                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
+)
+
+# Derive P:R ratio directly from back-transformed Pmax and Rd matrices
+proj_list[["P:R Ratio"]] <- proj_list$Pmax / proj_list$Respiration
+
+# ── Summarise: posterior median + 50% + 95% CI per variable per year ─────────
+proj_tbl <- imap_dfr(proj_list, function(mat, vname) {
+  tibble(variable = vname,
+         Year     = rep(proj_years, each = n),
+         value    = as.vector(mat)) |>
+    group_by(variable, Year) |>
+    summarise(median = median(value, na.rm = TRUE),
+              lo95   = quantile(value, 0.025, na.rm = TRUE), hi95 = quantile(value, 0.975, na.rm = TRUE),
+              lo50   = quantile(value, 0.25,  na.rm = TRUE), hi50 = quantile(value, 0.75,  na.rm = TRUE),
+              .groups = "drop")
+})
+
+# ── Observed data for overlay ─────────────────────────────────────────────────
+obs_proj <- Year_Averages |>
+  transmute(Year,
+            Temperature    = Max_temp,
+            `Coral Cover`  = mean_coral,
+            Respiration    = Rd,
+            `Fleshy Algae` = mean_fleshy,
+            Pmax           = Pmax,
+            `N Content`    = N_percent,
+            `P:R Ratio`    = Pmax / Rd) |>
+  pivot_longer(-Year, names_to = "variable", values_to = "observed")
+```
+
+## Reduced SEM: Parsimonious Model
+
+Three of the twelve pathways in the full SEM had 95% credible intervals spanning zero — direct temperature effects on respiration, direct temperature effects on Pmax , and a direct coral effect on Pmax — indicating that these pathways are not reliably supported by the data. Retaining them in projection creates two problems: the positive temperature→Rd coefficient generates a spurious upward push on Rd when temperature is extrapolated beyond the fitted range, and the large uncertainty on the coral→Pmax and temperature→Pmax terms inflates Pmax credible intervals. A reduced 9-pathway SEM was therefore fitted with these three terms removed.
+
+```{r sem-reduced-fit}
+#| label: sem-reduced-model
+#| cache: true
+#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
+
+# Reduced SEM: remove 3 non-significant pathways
+bf_temp_r        <- bf(temperature | mi()             ~ 1 + Year)
+bf_coraltemp_r   <- bf(logcoral    | trunc(ub = 3.39) ~ 1 + temperature + yearresid +
+                         ar(time = Year, p = 1))
+bf_logrd_r       <- bf(logrd       | mi()             ~ 1 + logcoral)
+bf_logpmax_r     <- bf(logpmax     | mi()             ~ 1 + mi(logrd))
+bf_fleshy_r      <- bf(logfleshy   | trunc(ub = 2.26) ~ logcoral)
+bf_herbs_r       <- bf(herbs       | mi()             ~ 1 + logfleshy)
+bf_corallivore_r <- bf(Corallivore | mi()             ~ 1 + logcoral)
+bf_nutrients_r   <- bf(Npercent    | mi()             ~ 1 + mi(logrd))
+
+brms_sem_reduced <- brm(
+  bf_temp_r + bf_coraltemp_r + bf_logrd_r + bf_herbs_r + bf_corallivore_r +
+    bf_nutrients_r + bf_fleshy_r + bf_logpmax_r + set_rescor(FALSE),
+  data    = semdata2,
+  chains  = 3, iter = 10000, warmup = 5000, seed = 11,
+  sample_prior = "no",
+  prior   = c(
+    # b-class priors per response (logpmax and Npercent excluded: only mi() predictors
+    # → class bsp, not b)
+    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
+    # Intercept priors for all responses
+    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
+    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
+    # Response-specific essential priors
+    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
+    set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
+  ),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  family  = gaussian(),
+  silent = 2, refresh = 0
+)
+```
+
+```{r sem-reduced-summary}
+#| label: sem-reduced-results
+
+summary(brms_sem_reduced)
+```
+
+```{r sem-reduced-r2}
+#| label: sem-reduced-r2
+
+# Manual R² for mi()-imputed responses
+for (resp in c("logrd", "logpmax")) {
+  fit_f <- fitted(brms_sem_full,    resp = resp)[, "Estimate"]
+  fit_r <- fitted(brms_sem_reduced, resp = resp)[, "Estimate"]
+  obs_v <- semdata2[[resp]]
+  ok    <- !is.na(obs_v)
+  cat(sprintf("%-10s  Full R²: %.3f   Reduced R²: %.3f\n", resp,
+              cor(fit_f[ok], obs_v[ok])^2, cor(fit_r[ok], obs_v[ok])^2))
+}
+```
+
+```{r sem-reduced-projections}
+#| label: reduced-sem-projection-data
+
+set.seed(6214)
+post_r <- as_draws_df(brms_sem_reduced) |> as_tibble() |> slice_sample(n = 3000)
+n_r    <- nrow(post_r)
+
+# yearresid matrix: observed for 2005-2025, zero for 2026-2055
+yr_resid_vec_r <- sapply(proj_years, function(y) {
+  row <- yr_resid_lookup |> filter(Year == y)
+  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
+})
+yr_resid_mat_r <- matrix(rep(yr_resid_vec_r, each = n_r), nrow = n_r)
+yr_mat_r       <- matrix(rep(year_std, each = n_r), nrow = n_r)
+
+# ── Propagate reduced SEM causal chain ────────────────────────────────────────
+temp_mat_r   <- rs(post_r$b_temperature_Year,     yr_mat_r)   + post_r$b_temperature_Intercept
+coral_mat_r  <- rs(post_r$b_logcoral_temperature, temp_mat_r) +
+                rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r) +
+                post_r$b_logcoral_Intercept
+rd_mat_r     <- rs(post_r$b_logrd_logcoral, coral_mat_r)      + post_r$b_logrd_Intercept
+fleshy_mat_r <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r) + post_r$b_logfleshy_Intercept,
+                     z_ceil_fleshy)
+cov_mat_r    <- rs(post_r$b_Corallivore_logcoral, coral_mat_r)+ post_r$b_Corallivore_Intercept
+herb_mat_r   <- rs(post_r$b_herbs_logfleshy, fleshy_mat_r)    + post_r$b_herbs_Intercept
+pmax_mat_r   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r)      + post_r$b_logpmax_Intercept
+n_mat_r      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r)     + post_r$b_Npercent_Intercept
+
+proj_list_r <- list(
+  Temperature    = bt_lin(temp_mat_r,   modelmean$temperature, modelsd$temperature),
+  `Coral Cover`  = bt_log(coral_mat_r,  modelmean$logcoral,    modelsd$logcoral),
+  Respiration    = bt_log(rd_mat_r,     modelmean$logrd,       modelsd$logrd),
+  `Fleshy Algae` = bt_log(fleshy_mat_r, modelmean$logfleshy,   modelsd$logfleshy),
+  Pmax           = bt_log(pmax_mat_r,   modelmean$logpmax,     modelsd$logpmax),
+  `N Content`    = bt_log(n_mat_r,
+                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
+)
+proj_list_r[["P:R Ratio"]] <- proj_list_r$Pmax / proj_list_r$Respiration
+
+proj_tbl_r <- imap_dfr(proj_list_r, function(mat, vname) {
+  tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
+    group_by(variable, Year) |>
+    summarise(median = median(value, na.rm = TRUE),
+              lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
+              lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
+              .groups = "drop")
+})
+
+# ── Counterfactual: temperature stabilised at 2025 ────────────────────────────
+# temp_2025_std: z-standardised 2025 annual maximum temperature
+# = (observed 2025 max temp - SEM temperature mean) / SEM temperature SD
+# Use last non-NA Max_temp as the counterfactual (2025 is NA)
+temp_2025_val <- Year_Averages |>
+  filter(!is.na(Max_temp)) |>
+  slice_max(Year, n = 1) |>
+  pull(Max_temp)
+temp_2025_std <- (temp_2025_val - modelmean$temperature) / modelsd$temperature
+temp_mat_r_cf <- temp_mat_r
+temp_mat_r_cf[, which(proj_years > 2025)] <- temp_2025_std
+
+coral_mat_r_cf  <- rs(post_r$b_logcoral_temperature, temp_mat_r_cf)   +
+                   rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r)  +
+                   post_r$b_logcoral_Intercept
+rd_mat_r_cf     <- rs(post_r$b_logrd_logcoral, coral_mat_r_cf)        + post_r$b_logrd_Intercept
+fleshy_mat_r_cf <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r_cf) + post_r$b_logfleshy_Intercept,
+                        z_ceil_fleshy)
+pmax_mat_r_cf   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r_cf)        + post_r$b_logpmax_Intercept
+n_mat_r_cf      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r_cf)       + post_r$b_Npercent_Intercept
+
+proj_tbl_r_cf <- imap_dfr(
+  list(Temperature    = bt_lin(temp_mat_r_cf,   modelmean$temperature, modelsd$temperature),
+       `Coral Cover`  = bt_log(coral_mat_r_cf,  modelmean$logcoral,    modelsd$logcoral),
+       Respiration    = bt_log(rd_mat_r_cf,     modelmean$logrd,       modelsd$logrd),
+       `Fleshy Algae` = bt_log(fleshy_mat_r_cf, modelmean$logfleshy,   modelsd$logfleshy),
+       Pmax           = bt_log(pmax_mat_r_cf,   modelmean$logpmax,     modelsd$logpmax),
+       `N Content`    = bt_log(n_mat_r_cf,
+                               mean(log(Year_Averages$N_percent), na.rm = TRUE),
+                               sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
+  function(mat, vname) {
+    tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
+      group_by(variable, Year) |>
+      summarise(median = median(value, na.rm = TRUE),
+                lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
+                lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
+                .groups = "drop")
+  })
+
+```
+
+## Copernicus CDS CMIP6 SST Projections to 2100
+
+```{r cds-setup}
+#| label: cds-setup
+#| echo: true
+#| eval: false
+
+# ── Run once to store your CDS Personal Access Token securely ─────────────────
+# 1. Log in at https://cds.climate.copernicus.eu/
+# 2. Go to Profile (top-right) → Personal Access Tokens → copy your token
+# 3. Paste it below and run this chunk once — it will not need to be run again.
+wf_set_key(key = "YOUR-PERSONAL-ACCESS-TOKEN")
+```
+
+```{r cds-cmip6-sst-download}
+#| label: cds-cmip6-sst-download
+#| cache: true
+#| echo: false
+#| message: false
+
+# ── Download CMIP6 sea surface temperature (tos) from Copernicus CDS ──────────
+# Five coupled ScenarioMIP models confirmed to have tos for historical (1950–2014)
+# and all three needed SSPs (2015–2100) in the CDS projections-cmip6 dataset:
+# ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL.
+# Monthly resolution, spatially subsetted to a 3° box around Moorea LTER Site 1
+# (~17.5°S, 149.8°W).
+#
+# IMPORTANT: CDS returns only one model per request when multiple are listed —
+# requests are therefore submitted one per model × experiment (20 total).
+# With workers = 2, expect ~40–60 minutes on first run.
+
+# ── CDS key setup ─────────────────────────────────────────────────────────────
+# Locally: key was stored in the keyring via the cds-setup chunk.
+# On Code Ocean (or any environment without keyring): set the CDS_API_KEY
+# environment variable in your capsule's Secrets panel, and it will be used here.
+cds_api_key <- Sys.getenv("CDS_API_KEY", unset = "")
+if (nzchar(cds_api_key)) {
+  wf_set_key(key = cds_api_key)
+}
+
+sst_dir     <- here("Data", "cmip6_sst")
+all_months  <- as.list(sprintf("%02d", 1:12))
+moorea_area <- c(-16.0, -151.0, -19.0, -148.0)
+
+# Models confirmed viable on CDS for all required experiments
+viable_models <- c("access_cm2", "ipsl_cm6a_lr", "miroc6", "mpi_esm1_2_lr", "ukesm1_0_ll")
+
+# Map CDS snake_case names → NC filename fragment for existence check
+model_nc_name <- c(
+  access_cm2    = "ACCESS-CM2",
+  ipsl_cm6a_lr  = "IPSL-CM6A-LR",
+  miroc6        = "MIROC6",
+  mpi_esm1_2_lr = "MPI-ESM1-2-LR",
+  ukesm1_0_ll   = "UKESM1-0-LL"
+)
+
+experiments_cfg <- list(
+  list(exp = "historical",  years = 1950:2014),
+  list(exp = "ssp1_2_6",    years = 2015:2100),
+  list(exp = "ssp2_4_5",    years = 2015:2100),
+  list(exp = "ssp5_8_5",    years = 2015:2100)
+)
+
+# Create experiment output directories
+for (exp_cfg in experiments_cfg)
+  dir.create(file.path(sst_dir, exp_cfg$exp), recursive = TRUE, showWarnings = FALSE)
+
+# Build pending requests: skip any model-experiment whose NC already exists
+pending_requests <- list()
+for (exp_cfg in experiments_cfg) {
+  exp_dir <- file.path(sst_dir, exp_cfg$exp)
+  for (model_name in viable_models) {
+    nc_present <- any(grepl(model_nc_name[[model_name]],
+                            list.files(exp_dir, pattern = "\\.nc$")))
+    if (!nc_present) {
+      pending_requests <- c(pending_requests, list(list(
+        dataset_short_name  = "projections-cmip6",
+        temporal_resolution = "monthly",
+        experiment          = exp_cfg$exp,
+        variable            = "sea_surface_temperature",
+        model               = list(model_name),
+        year                = as.list(as.character(exp_cfg$years)),
+        month               = all_months,
+        area                = moorea_area,
+        target              = sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp)
+      )))
+    }
+  }
+}
+
+if (length(pending_requests) == 0) {
+  message("All model NC files already present — skipping CDS download.")
+} else if (!nzchar(cds_api_key)) {
+  stop(
+    "NC files are missing but no CDS API key is available.\n",
+    "  - Locally: run the cds-setup chunk once to store your key in the keyring.\n",
+    "  - On Code Ocean: add your token as a secret named CDS_API_KEY in the\n",
+    "    capsule's Environment > Secrets panel, then re-run."
+  )
+} else {
+  message(sprintf("Submitting %d CDS requests (one per model × experiment)...",
+                  length(pending_requests)))
+  wf_request_batch(pending_requests, workers = 2, path = sst_dir)
+
+  # Extract each per-model zip to its experiment directory
+  for (exp_cfg in experiments_cfg) {
+    exp_dir <- file.path(sst_dir, exp_cfg$exp)
+    for (model_name in viable_models) {
+      zip_path <- file.path(sst_dir, sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp))
+      if (file.exists(zip_path))
+        unzip(zip_path, exdir = exp_dir, overwrite = FALSE)
+    }
+  }
+}
+```
+
+```{r cds-cmip6-sst-process}
+#| label: cds-cmip6-sst-process
+#| cache: true
+#| dependson: ["cds-cmip6-sst-download"]
+#| echo: false
+#| message: false
+
+# ── Read CDS NetCDF files, extract Moorea grid cell, bias-correct ─────────────
+# Produces:
+#   wb_proj_bc   — ensemble p10/median/p90 per scenario-year (used in propagation)
+#   ann_cmip6_bc — per-model historical annual max SST (used for spread ribbon)
+
+sst_dir    <- "Data/cmip6_sst"
+moorea_lon <- -149.83
+moorea_lat <- -17.48
+
+# Extract model name from CMIP6 standard filename:
+# <var>_<freq>_<model>_<exp>_<variant>_<grid>_<period>.nc
+extract_model_name <- function(filepath) {
+  parts <- strsplit(basename(filepath), "_")[[1]]
+  if (length(parts) >= 3) parts[3] else "unknown"
+}
+
+read_tos_nc <- function(nc_path, experiment) {
+  nc <- nc_open(nc_path)
+  on.exit(nc_close(nc))
+
+  model <- extract_model_name(nc_path)
+
+  # Coordinates — handle 1-D regular, 2-D curvilinear, and NEMO (nav_lon/nav_lat) grids
+  lon <- tryCatch(ncvar_get(nc, "lon"),
+           error = \(e) tryCatch(ncvar_get(nc, "longitude"),
+             error = \(e2) ncvar_get(nc, "nav_lon")))
+  lat <- tryCatch(ncvar_get(nc, "lat"),
+           error = \(e) tryCatch(ncvar_get(nc, "latitude"),
+             error = \(e2) ncvar_get(nc, "nav_lat")))
+
+  # Normalise 0–360 longitudes to -180–180
+  lon_norm <- ifelse(lon > 180, lon - 360, lon)
+
+  if (length(dim(lon)) == 2) {
+    # Curvilinear grid
+    dist  <- sqrt((lon_norm - moorea_lon)^2 + (lat - moorea_lat)^2)
+    idx   <- which(dist == min(dist, na.rm = TRUE), arr.ind = TRUE)
+    tos_raw <- ncvar_get(nc, "tos")[idx[1, 1], idx[1, 2], ]
+  } else {
+    i_lon   <- which.min(abs(lon_norm - moorea_lon))
+    i_lat   <- which.min(abs(lat      - moorea_lat))
+    tos_raw <- ncvar_get(nc, "tos")[i_lon, i_lat, ]
+  }
+
+  # Time → calendar dates
+  time_raw   <- ncvar_get(nc, "time")
+  time_units <- ncatt_get(nc, "time", "units")$value
+  origin_str <- sub("^days since ", "", time_units)
+  dates      <- as.Date(origin_str) + as.integer(round(time_raw))
+
+  # Replace fill values with NA
+  fv <- ncatt_get(nc, "tos", "_FillValue")$value
+  if (length(fv) > 0) tos_raw[abs(tos_raw - fv) < abs(fv) * 1e-3] <- NA
+
+  # Convert Kelvin → Celsius if needed
+  u <- ncatt_get(nc, "tos", "units")$value
+  if (length(u) > 0 && grepl("^K$|kelvin", u, ignore.case = TRUE))
+    tos_raw <- tos_raw - 273.15
+
+  n <- min(length(dates), length(tos_raw))
+  tibble(model      = model,
+         experiment = experiment,
+         date       = dates[seq_len(n)],
+         tos        = as.numeric(tos_raw[seq_len(n)]))
+}
+
+# Read NC files directly from pre-extracted experiment directories.
+# (The download chunk extracts each per-model zip to its experiment directory,
+# so no unzipping is needed here.)
+all_tos <- map_dfr(c("historical", "ssp1_2_6", "ssp2_4_5", "ssp5_8_5"),
+  function(experiment) {
+    exp_dir  <- file.path(sst_dir, experiment)
+    nc_files <- list.files(exp_dir, pattern = "\\.nc$", full.names = TRUE)
+    if (length(nc_files) == 0) { warning("No NC files in: ", exp_dir); return(NULL) }
+    map_dfr(nc_files, \(f) tryCatch(
+      read_tos_nc(f, experiment),
+      error = \(e) { warning(basename(f), ": ", e$message); NULL }
+    ))
+  })
+
+# Annual maximum SST per model-year
+ann_tos <- all_tos |>
+  mutate(year = year(date)) |>
+  group_by(model, experiment, year) |>
+  summarise(ann_max = max(tos, na.rm = TRUE), .groups = "drop") |>
+  filter(is.finite(ann_max))
+
+# ── Anchor each model to observed MCR 2005-2025 mean ───
+# Bias-correct each CMIP6 model by shifting it to match the observed MCR mean
+# over the 2005–2025 overlap window. This is a simple additive delta correction
+# — it removes model-level biases while preserving each model's warming rate.
+obs_mean_mcr_cds <- mean(Year_Averages$Max_temp[Year_Averages$Year %in% 2005:2025],
+                         na.rm = TRUE)
+
+bias_tbl_cds <- ann_tos |>
+  filter(
+    (experiment == "historical"                            & year %in% 2005:2014) |
+    (experiment %in% c("ssp1_2_6","ssp2_4_5","ssp5_8_5") & year %in% 2015:2025)
+  ) |>
+  group_by(model) |>
+  summarise(model_mean = mean(ann_max, na.rm = TRUE), .groups = "drop") |>
+  mutate(bias = obs_mean_mcr_cds - model_mean)
+
+ann_tos_bc <- ann_tos |>
+  left_join(bias_tbl_cds, by = "model") |>
+  mutate(ann_max_bc = ann_max + bias)
+
+# ── Ensemble p10 / median / p90 per experiment-year ───────────────────────────
+ens_stats <- function(data, exp_name) {
+  data |>
+    filter(experiment == exp_name) |>
+    group_by(year) |>
+    summarise(p10    = quantile(ann_max_bc, 0.10, na.rm = TRUE),
+              median = quantile(ann_max_bc, 0.50, na.rm = TRUE),
+              p90    = quantile(ann_max_bc, 0.90, na.rm = TRUE),
+              .groups = "drop") |>
+    mutate(experiment = exp_name)
+}
+
+ssp_ens  <- bind_rows(
+  ens_stats(ann_tos_bc, "ssp1_2_6"),
+  ens_stats(ann_tos_bc, "ssp2_4_5"),
+  ens_stats(ann_tos_bc, "ssp5_8_5")
+)
+hist_ens <- ens_stats(ann_tos_bc, "historical")
+
+# ── Build wb_proj_bc (structure expected by downstream propagation code) ───────
+ssp_long <- ssp_ens |>
+  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
+  mutate(scenario = case_when(
+    experiment == "ssp1_2_6" ~ "ssp126",
+    experiment == "ssp2_4_5" ~ "ssp245",
+    experiment == "ssp5_8_5" ~ "ssp585"
+  )) |>
+  select(year, scenario, percentile, tasmax_bc)
+
+# Historical 2005-2014 expanded across all three scenarios for the overlap window
+hist_long <- hist_ens |>
+  filter(year %in% 2005:2014) |>
+  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
+  select(year, percentile, tasmax_bc) |>
+  expand_grid(scenario = c("ssp126", "ssp245", "ssp585"))
+
+wb_proj_bc <- bind_rows(hist_long, ssp_long) |>
+  distinct(year, scenario, percentile, .keep_all = TRUE) |>
+  arrange(scenario, percentile, year) |>
+  filter(year %in% 2005:2100)
+
+# ── ann_cmip6_bc: historical per-model series for the 2005-2014 spread ribbon ─
+ann_cmip6_bc <- ann_tos_bc |>
+  filter(experiment == "historical")
+```
+
+```{r wb-cmip6-propagate}
+#| label: wb-cmip6-propagate
+
+# ── Propagate each SSP scenario through the reduced SEM ──────────────────────
+# Approach: two uncertainty sources are kept separate.
+#
+#   Temperature panel  — shows the raw CMIP6 inter-model spread (p10/p90 of
+#     the 10 bias-corrected models). This ribbon is NOT derived from the SEM.
+#
+#   Ecological panels  — driven by a single, deterministic ensemble-median
+#     temperature trajectory per scenario. All 3,000 SEM posterior draws use
+#     identical temperatures, so the ribbon reflects SEM path-coefficient
+#     uncertainty only. 
+#
+
+
+# ── Map scenario codes to experiment names used in ann_tos_bc ────────────────
+ssp_experiment <- c(ssp126 = "ssp1_2_6", ssp245 = "ssp2_4_5", ssp585 = "ssp5_8_5")
+
+# Build a bias-corrected model × year temperature matrix for a given scenario
+get_model_temp_matrix <- function(scenario_name) {
+  exp_name <- ssp_experiment[[scenario_name]]
+
+  temps <- bind_rows(
+    ann_tos_bc |> filter(experiment == "historical", year %in% 2005:2014),
+    ann_tos_bc |> filter(experiment == exp_name,     year %in% 2015:2100)
+  ) |>
+    select(model, year, ann_max_bc)
+
+  # Retain only models with a complete, non-missing 96-year series
+  complete_models <- temps |>
+    group_by(model) |>
+    summarise(n = n(), ok = all(!is.na(ann_max_bc)), .groups = "drop") |>
+    filter(n == 96L, ok) |>
+    pull(model)
+
+  temps |>
+    filter(model %in% complete_models) |>
+    arrange(model, year) |>
+    pivot_wider(names_from = year, values_from = ann_max_bc) |>
+    select(-model) |>
+    as.matrix()                          # n_complete_models × 96
+}
+
+# ── CMIP6 ensemble temperature summary (for Temperature panel display) ────────
+# Returns median, p10, and p90 across models for each scenario/year.
+get_temp_ensemble_summary <- function(scenario_name) {
+  temp_raw <- get_model_temp_matrix(scenario_name)   # n_models × 96 (2005:2100)
+
+  # Historical (2005–2025): observed MCR temperatures, zero ribbon — mirrors the
+  # two-period approach used for ecological variables so all panels are consistent.
+  hist_rows <- Year_Averages |>
+    filter(Year %in% 2005:2025) |>
+    arrange(Year) |>
+    transmute(
+      scenario = scenario_name,
+      variable = "Temperature",
+      year     = Year,
+      median   = Max_temp,
+      lo95     = Max_temp, hi95 = Max_temp,
+      lo50     = Max_temp, hi50 = Max_temp
+    )
+
+  # Projection (2026–2100): CMIP6 ensemble median + p10/p90 inter-model spread
+  proj_rows <- tibble(
+    scenario = scenario_name,
+    variable = "Temperature",
+    year     = 2026:2100,
+    median   = apply(temp_raw[, 22:96, drop = FALSE], 2, median),
+    lo95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.10),
+    hi95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.90),
+    lo50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.25),
+    hi50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.75)
+  )
+
+  bind_rows(hist_rows, proj_rows)
+}
+
+propagate_wb_ssp <- function(scenario_name) {
+
+  n_pct_log_mean <- mean(log(Year_Averages$N_percent), na.rm = TRUE)
+  n_pct_log_sd   <- sd(log(Year_Averages$N_percent),   na.rm = TRUE)
+
+  # ── CMIP6 ensemble-median temperature trajectory ──────────────────────────
+  temp_raw     <- get_model_temp_matrix(scenario_name)
+  temp_med_raw <- apply(temp_raw, 2, median)               # length 96 (2005:2100)
+  temp_z_cmip6 <- (temp_med_raw - modelmean$temperature) / modelsd$temperature
+
+  cmip6_z_2025 <- temp_z_cmip6[21]                         # index 21 = year 2025
+  tm_proj      <- matrix(rep(temp_z_cmip6[22:96], each = n_r), nrow = n_r)  # n_r × 75
+
+  # ── yearresid: held constant at its 2025 observed value ──────────────────
+  # The yearresid captures secular (non-temperature) trends up to 2025. For
+  # the projection period we hold it constant 
+  yr_2025 <- {
+    row <- yr_resid_lookup |> filter(Year == 2025L)
+    if (nrow(row) == 1L && !is.na(row$yr)) row$yr else 0
+  }
+  yr_rv_proj <- rep(yr_2025, 75)   # constant at 2025 level throughout projection
+  yrm_proj   <- matrix(rep(yr_rv_proj, each = n_r), nrow = n_r)
+
+  # ── SEM baseline at 2025 (CMIP6 T_2025 + observed yearresid_2025) ────────
+  cm_base  <- pmin(post_r$b_logcoral_temperature * cmip6_z_2025 +
+                   post_r$b_logcoral_yearresid   * yr_2025 +
+                   post_r$b_logcoral_Intercept, z_ceil_coral)          # n_r
+  rm_base  <- post_r$b_logrd_logcoral          * cm_base + post_r$b_logrd_Intercept
+  fm_base  <- pmin(post_r$b_logfleshy_logcoral * cm_base +
+                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm_base  <- post_r$bsp_logpmax_milogrd  * rm_base + post_r$b_logpmax_Intercept
+  nm_base  <- post_r$bsp_Npercent_milogrd * rm_base + post_r$b_Npercent_Intercept
+
+  # ── SEM projection at 2026–2100 ───────────────────────────────────────────
+  cm_proj  <- pmin(rs(post_r$b_logcoral_temperature, tm_proj) +
+                   rs(post_r$b_logcoral_yearresid,   yrm_proj) +
+                   post_r$b_logcoral_Intercept, z_ceil_coral)
+  rm_proj  <- rs(post_r$b_logrd_logcoral,          cm_proj) + post_r$b_logrd_Intercept
+  fm_proj  <- pmin(rs(post_r$b_logfleshy_logcoral, cm_proj) +
+                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
+  pm_proj  <- rs(post_r$bsp_logpmax_milogrd,  rm_proj) + post_r$b_logpmax_Intercept
+  nm_proj  <- rs(post_r$bsp_Npercent_milogrd, rm_proj) + post_r$b_Npercent_Intercept
+
+  # ── Observed z-scores at 2025 (anchor points) ────────────────────────────
+  obs25 <- Year_Averages |> filter(Year == 2025)
+  obs_cm_z <- (log(obs25$mean_coral)  - modelmean$logcoral)  / modelsd$logcoral
+  obs_rm_z <- (log(obs25$Rd)          - modelmean$logrd)     / modelsd$logrd
+  obs_fm_z <- (log(obs25$mean_fleshy) - modelmean$logfleshy) / modelsd$logfleshy
+  obs_pm_z <- (log(obs25$Pmax)        - modelmean$logpmax)   / modelsd$logpmax
+  # N_percent: use last non-NA year if 2025 is missing
+  n_anchor <- if (!is.na(obs25$N_percent)) obs25$N_percent else {
+    Year_Averages |> filter(!is.na(N_percent)) |> slice_max(Year, n = 1) |> pull(N_percent)
+  }
+  obs_nm_z <- (log(n_anchor) - n_pct_log_mean) / n_pct_log_sd
+
+  # ── Delta-anchored projection matrices ───────────────────────────────────
+  # anchored[draw, year] = obs_z_2025 + (proj[draw, year] - base[draw])
+  cm_anch <- pmin(sweep(cm_proj, 1, cm_base, "-") + obs_cm_z, z_ceil_coral)
+  rm_anch <- sweep(rm_proj, 1, rm_base, "-") + obs_rm_z
+  fm_anch <- pmin(sweep(fm_proj, 1, fm_base, "-") + obs_fm_z, z_ceil_fleshy)
+  pm_anch <- sweep(pm_proj, 1, pm_base, "-") + obs_pm_z
+  nm_anch <- sweep(nm_proj, 1, nm_base, "-") + obs_nm_z
+
+  proj_rows <- imap_dfr(
+    list(`Coral Cover`  = bt_log(cm_anch, modelmean$logcoral,  modelsd$logcoral),
+         Respiration    = bt_log(rm_anch, modelmean$logrd,     modelsd$logrd),
+         `Fleshy Algae` = bt_log(fm_anch, modelmean$logfleshy, modelsd$logfleshy),
+         Pmax           = bt_log(pm_anch, modelmean$logpmax,   modelsd$logpmax),
+         `N Content`    = bt_log(nm_anch, n_pct_log_mean,      n_pct_log_sd)),
+    function(mat, vname) {
+      tibble(scenario = scenario_name, variable = vname,
+             year = rep(2026:2100, each = n_r), value = as.vector(mat)) |>
+        group_by(scenario, variable, year) |>
+        summarise(median = median(value, na.rm = TRUE),
+                  lo95   = quantile(value, .025, na.rm = TRUE),
+                  hi95   = quantile(value, .975, na.rm = TRUE),
+                  lo50   = quantile(value, .25,  na.rm = TRUE),
+                  hi50   = quantile(value, .75,  na.rm = TRUE),
+                  .groups = "drop")
+    })
+
+  # ── Historical period: observed values directly, zero ribbon ─────────────
+  hist_rows <- Year_Averages |>
+    filter(Year %in% 2005:2025) |>
+    arrange(Year) |>
+    transmute(scenario = scenario_name, year = Year,
+              `Coral Cover` = mean_coral, Respiration = Rd,
+              `Fleshy Algae` = mean_fleshy, Pmax = Pmax, `N Content` = N_percent) |>
+    pivot_longer(cols = -c(scenario, year), names_to = "variable", values_to = "median") |>
+    mutate(lo95 = median, hi95 = median, lo50 = median, hi50 = median)
+
+  bind_rows(hist_rows, proj_rows)
+}
+
+wb_proj_eco <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), propagate_wb_ssp))
+
+# Temperature rows: ensemble p10/p90 ribbon (not SEM-derived)
+wb_temp_tbl <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), get_temp_ensemble_summary))
+
+# Combined table used by plotting and summary table
+wb_proj_tbl <- bind_rows(wb_temp_tbl, wb_proj_eco)
+
+# ── Tidy for plotting ─────────────────────────────────────────────────────────
+wb_ssp_labels  <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5", ssp585 = "SSP5-8.5")
+wb_ssp_colours <- c(ssp126 = "#2196F3",  ssp245 = "#FF9800",   ssp585 = "#E53935")
+wb_var_order   <- c("Temperature","Coral Cover","Respiration",
+                    "Fleshy Algae","Pmax","N Content")
+wb_var_units   <- c(Temperature    = "\u00b0C",
+                    `Coral Cover`  = "% cover",
+                    Respiration    = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
+                    `Fleshy Algae` = "% cover",
+                    Pmax           = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
+                    `N Content`    = "% N")
+
+wb_plot_tbl <- wb_proj_tbl |>
+  mutate(variable       = factor(variable, levels = wb_var_order),
+         scenario_label = wb_ssp_labels[scenario])
+```
+
+```{r fig-wb-cmip6}
+#| label: fig-wb-cmip6
+#| cache: false
+#| fig-cap: "**Figure 7.** Ecosystem projections under CMIP6 SSP emissions scenarios (2005–2100)."
+#| fig-width: 7.2
+#| fig-height: 7.87
+
+wb_y_limits <- list(
+  Temperature    = NULL,
+  `Coral Cover`  = c(0, NA),
+  Respiration    = c(0, NA),
+  `Fleshy Algae` = c(30, 100),
+  Pmax           = c(60, NA),
+  `N Content`    = c(0.3, NA)
+)
+
+# Y-axis labels: variable name + (units) on new line for ≥10 pt readability
+# Use expression(atop()) for labels with superscripts/subscripts — plain Unicode
+# characters for those (e.g. ⁻², O₂) are not reliably covered by PDF fonts.
+wb_var_labels <- list(
+  Temperature    = "Temperature\n(\u00b0C)",
+  `Coral Cover`  = "Coral Cover\n(% cover)",
+  Respiration    = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+  `Fleshy Algae` = "Fleshy Macroalgae and Turf\n(% cover)",
+  Pmax           = expression(atop("Ecosystem P"[max], "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
+  `N Content`    = "Algal N Content\n(% N)"
+)
+
+# Smooth trajectories for cleaner visualisation (projection period only):
+#   Temperature  → median smoothed k=11; ribbon (inter-model p10/p90) smoothed k=5.
+#   Ecological   → both median and ribbons smoothed k=5.
+# Historical period (2005–2025) is never smoothed; observed values are unchanged.
+wb_plot_tbl_smooth <- wb_plot_tbl |>
+  dplyr::group_by(variable, scenario) |>
+  dplyr::arrange(year) |>
+  dplyr::mutate(
+    is_temp = as.character(variable) == "Temperature",
+    k       = dplyr::if_else(is_temp, 11L, 5L),
+    in_proj = year > 2025,
+    median_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(median, width = k[1], FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      median
+    ),
+    lo95_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(lo95, width = 5L, FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      lo95
+    ),
+    hi95_s = dplyr::if_else(
+      in_proj,
+      zoo::rollapply(hi95, width = 5L, FUN = mean, align = "center",
+                     partial = TRUE, fill = NA, na.rm = TRUE),
+      hi95
+    )
+  ) |>
+  dplyr::ungroup()
+
+make_wb_panel <- function(vname) {
+  d_proj <- wb_plot_tbl_smooth |> filter(variable == vname, year > 2025)
+  obs_v  <- Year_Averages |>
+    select(year = Year,
+           Temperature    = Max_temp,
+           `Coral Cover`  = mean_coral,
+           Respiration    = Rd,
+           `Fleshy Algae` = mean_fleshy,
+           Pmax           = Pmax,
+           `N Content`    = N_percent) |>
+    pivot_longer(-year, names_to = "variable", values_to = "obs") |>
+    filter(variable == vname)
+  ylim <- wb_y_limits[[vname]]
+  ylab <- wb_var_labels[[vname]]
+
+  # Ribbon and lines drawn only for projection period (2026–2100);
+  # hindcast (2005–2025) shows raw observed points only.
+  p <- ggplot(mapping = aes(colour = scenario, fill = scenario)) +
+    annotate("rect", xmin = 2025.5, xmax = 2100, ymin = -Inf, ymax = Inf,
+             fill = "grey92", alpha = .6) +
+    geom_ribbon(data = d_proj, aes(x = year, ymin = lo95_s, ymax = hi95_s),
+                alpha = 0.25, colour = NA) +
+    geom_line(data = d_proj, aes(x = year, y = median_s), linewidth = 0.7) +
+    geom_point(data = obs_v, aes(x = year, y = obs),
+               colour = "black", size = 1.5, shape = 21, fill = "white",
+               inherit.aes = FALSE) +
+    geom_vline(xintercept = 2025.5, linetype = "dashed",
+               colour = "grey50", linewidth = .4) +
+    scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
+    scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
+    scale_x_continuous(breaks = seq(2010, 2100, 20)) +
+    labs(x = NULL, y = ylab) +
+    theme_bw(base_size = 10) +
+    theme(
+      legend.position  = "none",
+      plot.title       = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.title.y     = element_text(size = 10, lineheight = 1.1)
+    )
+  if (!is.null(ylim)) p <- p + coord_cartesian(ylim = ylim)
+  p
+}
+
+wb_panels <- lapply(wb_var_order, make_wb_panel)
+
+wb_legend_plot <- ggplot(
+  wb_plot_tbl_smooth |> filter(variable == "Temperature"),
+  aes(x = year, y = median_s, colour = scenario, fill = scenario)) +
+  geom_ribbon(aes(ymin = lo95_s, ymax = hi95_s), alpha = .25, colour = NA) +
+  geom_line(linewidth = .9) +
+  scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels,
+                      name = "CMIP6 Scenario") +
+  scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels,
+                      name = "CMIP6 Scenario") +
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.5))) +
+  theme_void() +
+  theme(legend.position  = "right", legend.direction = "vertical",
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.text  = element_text(size = 10))
+wb_leg <- cowplot::get_legend(wb_legend_plot)
+
+wb_main <- (wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")) +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(size = 10, face = "bold"))
+wb_fig7  <- cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.15))
+
+# Export at 183 × 200 mm ; base_size = 10 → 10 pt at print size
+ggsave(here("Output", "fig7_cmip6_projections.pdf"), plot = wb_fig7,
+       width = 183, height = 200, units = "mm", device = cairo_pdf)
+ggsave(here("Output", "fig7_cmip6_projections.png"), plot = wb_fig7,
+       width = 183, height = 200, units = "mm", dpi = 300)
+
+wb_fig7
+```
+
+```{r tbl-wb-cmip6}
+#| label: tbl-wb-cmip6
+#| tbl-cap: "CMIP6 SST ecosystem projections at 2050, 2075, and 2100 under three SSP scenarios (reduced Bayesian SEM)."
+
+wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
+  wb_proj_tbl |>
+    filter(year == yr) |>
+    mutate(scenario_label = wb_ssp_labels[scenario],
+           label = sprintf("%.1f (%.1f\u2013%.1f)", median, lo95, hi95)) |>
+    select(variable, scenario_label, label) |>
+    pivot_wider(names_from = scenario_label, values_from = label) |>
+    mutate(Year = yr) |>
+    relocate(Year, variable)
+})) |>
+  arrange(variable, Year) |>
+  rename(Variable = variable)
+
+knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
+```
+
+
+
+
+# Supplementary Material
+
+## Supplementary Figure 1: Photosynthesis-Irradiance Curves
+
+```{r fig-pi-curves}
+#| label: fig-pi-curves
+#| cache: false
+#| fig-cap: "**Figure S1.** Photosynthesis-irradiance (PI) curves by year."
+#| fig-width: 9
+#| fig-height: 7
+
+par_seq <- seq(0, max(LTER1_Pnet$PAR, na.rm = TRUE), length.out = 200)
+
+pi_params_plot <- fixef(fit1_f) |>
+  as.data.frame() |>
+  rownames_to_column("param") |>
+  as_tibble() |>
+  separate(param, into = c("type", "year_str"), sep = "_Year", remove = FALSE) |>
+  mutate(year = as.integer(year_str)) |>
+  filter(!is.na(year)) |>
+  select(type, year, Estimate) |>
+  pivot_wider(names_from = type, values_from = Estimate) |>
+  mutate(Rd = -Rd)
+
+fitted_curves <- pi_params_plot |>
+  rowwise() |>
+  reframe(
+    year   = year,
+    PAR    = par_seq,
+    PP_fit = (alpha * Pmax * par_seq) / (alpha * par_seq + Pmax) - Rd
+  )
+
+raw_data_plot <- LTER1_Pnet |>
+  mutate(year = as.integer(as.character(Year)))
+
+param_labels <- pi_params_plot |>
+  mutate(
+    label = sprintf("Pmax = %.0f\nRd = %.0f", Pmax, Rd),
+    PAR   = max(LTER1_Pnet$PAR, na.rm = TRUE) * 0.97,
+    PP    = min(LTER1_Pnet$PP,  na.rm = TRUE) * 0.85
+  )
+
+ggplot() +
+  geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+  geom_point(data = raw_data_plot,
+             aes(x = PAR, y = PP),
+             colour = "grey50", size = 0.5, alpha = 0.4, shape = 16) +
+  geom_line(data = fitted_curves,
+            aes(x = PAR, y = PP_fit),
+            colour = "#1A237E", linewidth = 0.7) +
+  facet_wrap(~year, ncol = 6) +
+  scale_x_continuous(breaks = c(0, 1000, 2000)) +
+  labs(
+    x = expression(PAR~(mu*mol~photons~m^{-2}~s^{-1})),
+    y = expression(Net~production~(mmol~O[2]~m^{-2}~hr^{-1}))
+  ) +
+  theme_bw(base_size = 8) +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_text(size = 8, face = "bold"),
+    panel.grid.minor = element_blank(),
+    axis.text        = element_text(size = 8),
+    axis.title = element_text(size = 12))
+ggsave(here("Output", "figS1_pi_curves.pdf"), width = 9, height = 7)
+
+
+```
+
+## Supplementary Figure 2: SEM Observed vs. Fitted Trajectories
+
+```{r fig-sem-obs-fit}
+#| label: fig-sem-obs-fit
+#| cache: false
+#| fig-cap: "**Figure S2.** SEM observed vs. fitted trajectories."
+#| fig-width: 10
+#| fig-height: 6
+
+# Response metadata — ordered by causal depth in the DAG
+resp_meta <- tibble(
+  resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
+            "Corallivore", "herbs",    "logpmax", "Npercent"),
+  label = c("Temperature", "Coral cover", "Ecosystem\nrespiration", "Fleshy\nmacroalgae\n& turf",
+            "Corallivore\nbiomass", "Herbivore\nbiomass", "Ecosystem\nPmax", "Algal N\ncontent")
+)
+
+# Actual calendar years aligned to semdata2 rows
+# actual_years must match rows brms used: excludes years where any non-mi()
+# predictor is NA (i.e. yearresid = NA when Max_temp = NA for 2025)
+actual_years <- Year_Averages |>
+  filter(!is.na(log_coral), !is.na(Max_temp)) |>
+  pull(Year)
+
+obs_fit_df <- resp_meta$resp |>
+  map(function(r) {
+    obs  <- semdata2[[r]]
+    fit  <- fitted(brms_sem_reduced, resp = r)[, c("Estimate", "Q2.5", "Q97.5")]
+    n_fit <- nrow(fit)
+    tibble(
+      Year     = actual_years[seq_len(n_fit)],
+      observed = obs[seq_len(n_fit)],
+      fitted   = fit[, "Estimate"],
+      lo95     = fit[, "Q2.5"],
+      hi95     = fit[, "Q97.5"],
+      resp     = r
+    )
+  }) |>
+  bind_rows() |>
+  left_join(resp_meta, by = "resp") |>
+  mutate(label = factor(label, levels = resp_meta$label))
+
+figS2 <- ggplot(obs_fit_df, aes(x = Year)) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "#2c7bb6", alpha = 0.18) +
+  geom_line(aes(y = fitted), colour = "#2c7bb6", linewidth = 0.75) +
+  geom_point(aes(y = observed), size = 1.6, colour = "black", na.rm = TRUE) +
+  facet_wrap(~ label, scales = "free_y", ncol = 4) +
+  scale_x_continuous(breaks = c(2005, 2015, 2025), minor_breaks = NULL) +
+  labs(x = NULL, y = "z-score") +
+  theme_bw(base_size = 10) +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_text(size = 9, face = "bold"),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(size = 7)
+  )
+
+ggsave(here("Output", "figS2_sem_obs_fit.pdf"), plot = figS2, width = 10, height = 6)
+
+figS2
+```
+
+## Supplementary Figure 3: SEM Posterior Predictive Checks
+
+```{r fig-sem-ppc}
+#| label: fig-sem-ppc
+#| cache: false
+#| fig-cap: "**Figure S3.** Posterior predictive checks."
+#| fig-width: 10
+#| fig-height: 6
+
+color_scheme_set("blue")
+
+# resp_meta defined in fig-sem-obs-fit; redefined here for chunk independence
+if (!exists("resp_meta")) {
+  resp_meta <- tibble(
+    resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
+              "Corallivore", "herbs",    "logpmax", "Npercent"),
+    label = c("Temperature", "Coral cover", "Ecosystem\nrespiration", "Fleshy\nmacroalgae\n& turf",
+              "Corallivore\nbiomass", "Herbivore\nbiomass", "Ecosystem\nPmax", "Algal N\ncontent")
+  )
+}
+
+ppc_plots <- map2(resp_meta$resp, resp_meta$label, function(r, lab) {
+  pp_check(brms_sem_reduced, resp = r, ndraws = 100, type = "dens_overlay") +
+    ggtitle(gsub("\n", " ", lab)) +
+    theme_bw(base_size = 9) +
+    theme(
+      legend.position  = "none",
+      plot.title       = element_text(size = 10, face = "bold"),
+      axis.title       = element_text(size = 8),
+      panel.grid.minor = element_blank()
+    )
+})
+ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
+wrap_plots(ppc_plots, ncol = 4)
+ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
+```
+
+## Supplementary Table 1: SEM Path Coefficients
+
+```{r tbl-sem-paths}
+#| label: tbl-sem-paths
+#| tbl-cap: "**Supplementary Table 1.** Standardised path coefficients from the Bayesian multivariate structural equation model (12 pathways, n = 19 annual observations, 2006–2024).**" 
+
+# Build tidy table from brms fixed effects summary
+sem_coef_table <- as.data.frame(summary(brms_sem_full)$fixed) |>
+  tibble::rownames_to_column("term") |>
+  # Keep only regression coefficients (exclude intercepts)
+  filter(!grepl("Intercept", term)) |>
+  mutate(
+    # Parse response and predictor from "response_predictor" format
+    Pathway = case_when(
+      term == "temperature_Year"         ~ "Year → Temperature",
+      term == "logcoral_temperature"     ~ "Temperature → Coral cover",
+      term == "logcoral_yearresid"       ~ "Year residual → Coral cover",
+      term == "logrd_logcoral"           ~ "Coral cover → Ecosystem respiration",
+      term == "logrd_mitemperature"      ~ "Temperature → Ecosystem respiration (direct)",
+      term == "logfleshy_logcoral"       ~ "Coral cover → Fleshy macroalgae",
+      term == "Corallivore_logcoral"     ~ "Coral cover → Corallivore biomass",
+      term == "herbs_logfleshy"          ~ "Fleshy macroalgae → Herbivore biomass",
+      term == "logpmax_milogrd"          ~ "Ecosystem respiration → Ecosystem Pmax",
+      term == "logpmax_logcoral"         ~ "Coral cover → Ecosystem Pmax (direct)",
+      term == "logpmax_mitemperature"    ~ "Temperature → Ecosystem Pmax (direct)",
+      term == "Npercent_milogrd"         ~ "Ecosystem respiration → Algal N content",
+      TRUE ~ term
+    ),
+    Credible = if_else(sign(`l-95% CI`) == sign(`u-95% CI`), "†", ""),
+    beta  = sprintf("%.3f", Estimate),
+    CI    = sprintf("[%.3f, %.3f]", `l-95% CI`, `u-95% CI`),
+    Rhat  = sprintf("%.4f", Rhat),
+    BESS  = formatC(round(Bulk_ESS), format = "d", big.mark = ","),
+    TESS  = formatC(round(Tail_ESS), format = "d", big.mark = ",")
+  ) |>
+  # Order by causal chain
+  mutate(order = case_when(
+    grepl("Year →",              Pathway) ~ 1,
+    grepl("Temperature →",       Pathway) ~ 2,
+    grepl("Year residual →",     Pathway) ~ 2,
+    grepl("Coral cover →",       Pathway) ~ 3,
+    grepl("Fleshy macroalgae →", Pathway) ~ 4,
+    grepl("Ecosystem respiration →", Pathway) ~ 5,
+    TRUE ~ 6
+  )) |>
+  arrange(order, Pathway) |>
+  select(Pathway, Credible, beta, CI, Rhat, `Bulk ESS` = BESS, `Tail ESS` = TESS)
+
+kable(sem_coef_table, align = c("l", "c", "r", "c", "r", "r", "r"),
+      col.names = c("Pathway", "", "β", "95% CI", "R̂", "Bulk ESS", "Tail ESS")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE,
+                font_size = 12) |>
+  column_spec(1, width = "14em") |>
+  column_spec(2, width = "1em") |>
+  footnote(symbol = "95% credible interval excludes zero.")
+```
+
+
+# References
+
+## Climate Data and CMIP6 Models
+
+**Copernicus Climate Data Store**
+
+Copernicus Climate Change Service (C3S) (2023). CMIP6 climate projections. Copernicus Climate Change Service (C3S) Climate Data Store (CDS). https://cds.climate.copernicus.eu/datasets/projections-cmip6. DOI: 10.24381/cds.c866074c
+
+**CMIP6 Overview**
+
+Eyring, V., Bony, S., Meehl, G. A., Senior, C. A., Stevens, B., Stouffer, R. J., & Taylor, K. E. (2016). Overview of the Coupled Model Intercomparison Project Phase 6 (CMIP6) experimental design and organization. *Geoscientific Model Development*, 9(5), 1937–1958. https://doi.org/10.5194/gmd-9-1937-2016
+
+**SSP Scenarios**
+
+O'Neill, B. C., Tebaldi, C., van Vuuren, D. P., Eyring, V., Friedlingstein, P., Hurtt, G., Knutti, R., Kriegler, E., Lamarque, J.-F., Lowe, J., Meehl, G. A., Moss, R., Riahi, K., & Sanderson, B. M. (2016). The Scenario Model Intercomparison Project (ScenarioMIP) for CMIP6. *Geoscientific Model Development*, 9(9), 3461–3482. https://doi.org/10.5194/gmd-9-3461-2016
+
+Riahi, K., van Vuuren, D. P., Kriegler, E., Edmonds, J., O'Neill, B. C., Fujimori, S., Bauer, N., Calvin, K., Dellink, R., Fricko, O., Lutz, W., Popp, A., Cuaresma, J. C., Kc, S., Leimbach, M., Jiang, L., Kram, T., Rao, S., Emmerling, J., … Tavoni, M. (2017). The Shared Socioeconomic Pathways and their energy, land use, and greenhouse gas emissions implications: An overview. *Global Environmental Change*, 42, 153–168. https://doi.org/10.1016/j.gloenvch.2016.05.009
+
+**Individual CMIP6 Models**
+
+Bi, D., Dix, M., Marsland, S., O'Farrell, S., Sullivan, A., Bodman, R., Law, R., Harman, I., Srbinovsky, J., Rashid, H. A., Dobrohotoff, P., Mackallah, C., Yan, H., Hirst, A., Savita, A., Dias, F. B., Woodhouse, M., Fiedler, R., & Heerdegen, A. (2020). Configuration and spin-up of ACCESS-CM2, the new generation Australian Community Climate and Earth System Simulator Coupled Model. *Journal of Southern Hemisphere Earth Systems Science*, 70(1), 225–251. https://doi.org/10.1071/ES19040
+
+Boucher, O., Servonnat, J., Albright, A. L., Aumont, O., Balkanski, Y., Bastrikov, V., Bekki, S., Bonnet, R., Bony, S., Bopp, L., Braconnot, P., Brockmann, P., Cadule, P., Caubel, A., Cheruy, F., Codron, F., Cozic, A., Cugnet, D., D'Andrea, F., … Vuichard, N. (2020). Presentation and evaluation of the IPSL‐CM6A‐LR climate model. *Journal of Advances in Modeling Earth Systems*, 12(7), e2019MS002010. https://doi.org/10.1029/2019MS002010
+
+Döscher, R., Acosta, M., Alessandri, A., Anthoni, P., Arsouze, T., Bergman, T., Bernardello, R., Boussetta, S., Caron, L.-P., Carver, G., Castrillo, M., Catalano, F., Cvijanovic, I., Davini, P., Dekker, E., Doblas-Reyes, F. J., Docquier, D., Echevarria, P., Fladrich, U., … Zhang, Q. (2022). The EC-Earth3 Earth system model for the Coupled Model Intercomparison Project 6. *Geoscientific Model Development*, 15(7), 2973–3020. https://doi.org/10.5194/gmd-15-2973-2022
+
+Dunne, J. P., Horowitz, L. W., Adcroft, A. J., Ginoux, P., Held, I. M., John, J. G., Krasting, J. P., Malyshev, S., Naik, V., Paulot, F., Shevliakova, E., Stock, C. A., Zadeh, N., Balaji, V., Blanton, C., Dunne, K. A., Dupuis, C., Durachta, J., Dussin, R., … Zhao, M. (2020). The GFDL Earth System Model version 4.1 (GFDL‐ESM 4.1): Overall coupled model description and simulation characteristics. *Journal of Advances in Modeling Earth Systems*, 12(11), e2019MS002015. https://doi.org/10.1029/2019MS002015
+
+Müller, W. A., Jungclaus, J. H., Mauritsen, T., Baehr, J., Bittner, M., Budich, R., Bunzel, F., Esch, M., Ghosh, R., Haak, H., Ilyina, T., Kleine, T., Kornblueh, L., Li, H., Modali, K., Notz, D., Pohlmann, H., Segschneider, J., Tian, F., … Marotzke, J. (2018). A higher-resolution version of the Max Planck Institute Earth System Model (MPI‐ESM1.2‐HR). *Journal of Advances in Modeling Earth Systems*, 10(7), 1383–1413. https://doi.org/10.1029/2017MS001217
+
+Seland, Ø., Bentsen, M., Olivié, D., Toniazzo, T., Gjermundsen, A., Graff, L. S., Debernard, J. B., Gupta, A. K., He, Y.-C., Kirkevåg, A., Schwinger, J., Tjiputra, J., Aas, K. S., Bethke, I., Fan, Y., Griesfeller, J., Grini, A., Guo, C., Ilicak, M., … Schulz, M. (2020). Overview of the Norwegian Earth System Model (NorESM2) and key climate response of CMIP6 DECK and historical simulations. *Geoscientific Model Development*, 13(12), 6165–6200. https://doi.org/10.5194/gmd-13-6165-2020
+
+Sellar, A. A., Jones, C. G., Mulcahy, J. P., Tang, Y., Yool, A., Wiltshire, A., O'Connor, F. M., Stringer, M., Hill, R., Palmieri, J., Woodward, S., de Mora, L., Kuhlbrodt, T., Rumbold, S. T., Kelley, D. I., Ellis, R., Johnson, C. E., Walton, J., Abraham, N. L., … Zerroukat, M. (2019). UKESM1: Description and evaluation of the UK Earth System Model. *Journal of Advances in Modeling Earth Systems*, 11(12), 4513–4558. https://doi.org/10.1029/2019MS001739
+
+Tatebe, H., Ogura, T., Nitta, T., Komuro, Y., Ogochi, K., Takemura, T., Sudo, K., Sekiguchi, M., Abe, M., Saito, F., Chikira, M., Watanabe, S., Mori, M., Hirota, N., Kawatani, Y., Mochizuki, T., Yoshimura, K., Takata, K., O'ishi, R., … Kimoto, M. (2019). Description and basic evaluation of simulated mean state, internal variability, and climate sensitivity in MIROC6. *Geoscientific Model Development*, 12(7), 2727–2765. https://doi.org/10.5194/gmd-12-2727-2019
+
+Wu, T., Lu, Y., Fang, Y., Xin, X., Li, L., Li, W., Jie, W., Zhang, J., Liu, Y., Zhang, L., Zhang, F., Zhang, Y., Wu, F., Li, J., Chu, M., Wang, Z., Shi, X., Liu, X., Wei, M., … Zhou, W. (2019). The Beijing Climate Center Climate System Model (BCC‐CSM2): Main progress from CMIP5 to CMIP6. *Geoscientific Model Development*, 12(4), 1573–1600. https://doi.org/10.5194/gmd-12-1573-2019
+
+Yukimoto, S., Kawai, H., Koshiro, T., Oshima, N., Yoshida, K., Urakawa, S., Tsujino, H., Deushi, M., Tanaka, T., Hosaka, M., Yabu, S., Yoshimura, H., Shindo, E., Mizuta, R., Obata, A., Adachi, Y., & Ishii, M. (2019). The Meteorological Research Institute Earth System Model version 2.0, MRI‐ESM2.0: Description and basic evaluation of the physical component. *Journal of the Meteorological Society of Japan*, 97(5), 931–965. https://doi.org/10.2151/jmsj.2019-051
+
+---
+
+## Statistical Methods and Software
+
+Bürkner, P.-C. (2017). brms: An R package for Bayesian multilevel models using Stan. *Journal of Statistical Software*, 80(1), 1–28. https://doi.org/10.18637/jss.v080.i01
+
+Bürkner, P.-C. (2018). Advanced Bayesian multilevel modeling with the R package brms. *The R Journal*, 10(1), 395–411. https://doi.org/10.32614/RJ-2018-017
+
+Carpenter, B., Gelman, A., Hoffman, M. D., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M., Guo, J., Li, P., & Riddell, A. (2017). Stan: A probabilistic programming language. *Journal of Statistical Software*, 76(1), 1–32. https://doi.org/10.18637/jss.v076.i01
+
+Csárdi, G., & Nepusz, T. (2006). The igraph software package for complex network research. *InterJournal, Complex Systems*, 1695. https://igraph.org
+
+Gelman, A., Goodrich, B., Gabry, J., & Vehtari, A. (2019). R-squared for Bayesian regression models. *The American Statistician*, 73(3), 307–309. https://doi.org/10.1080/00031305.2018.1549100
+
+Hufkens, K., Stauffer, R., & Campitelli, E. (2019). ecmwfr: Programmatic interface to the two main European Centre for Medium-Range Weather Forecasts APIs. *Journal of Open Source Software*, 4(43), 1867. https://doi.org/10.21105/joss.01867
+
+Kay, M. (2023). tidybayes: Tidy data and 'Geoms' for Bayesian models. R package version 3.0.6. https://mjskay.github.io/tidybayes/
+
+Pedersen, T. L. (2024). patchwork: The composer of plots. R package version 1.2.0. https://patchwork.data-imaginist.com
+
+Pierce, D. (2024). ncdf4: Interface to Unidata netCDF (Version 4 or Earlier) Format Data Files. R package version 1.22. https://CRAN.R-project.org/package=ncdf4
+
+Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., François, R., Grolemund, G., Hayes, A., Henry, L., Hester, J., Kuhn, M., Pedersen, T. L., Miller, E., Bache, S. M., Müller, K., Ooms, J., Robinson, D., Seidel, D. P., Spinu, V., … Yutani, H. (2019). Welcome to the tidyverse. *Journal of Open Source Software*, 4(43), 1686. https://doi.org/10.21105/joss.01686
+
+Wilke, C. O. (2024). cowplot: Streamlined Plot Theme and Plot Annotations for 'ggplot2'. R package version 1.1.3. https://wilkelab.org/cowplot/
+
+Zeileis, A., & Grothendieck, G. (2005). zoo: S3 infrastructure for regular and irregular time series. *Journal of Statistical Software*, 14(6), 1–27. https://doi.org/10.18637/jss.v014.i06
+
+---
+
+## Software and Reproducibility
+
+Key packages: **tidyverse** 2.0 (Wickham et al. 2019), **brms** 2.21 (Bürkner 2017), **tidybayes** 3.0 (Kay 2023), **patchwork** 1.2 (Pedersen 2024), **ggraph** 2.1 and **igraph** 1.6 (Csárdi & Nepusz 2006), **httr2** (Wickham 2023), **zoo** (Zeileis & Grothendieck 2005), **cowplot** (Wilke 2024), **ecmwfr** (Hufkens et al. 2019; https://bluegreen-labs.github.io/ecmwfr/), **ncdf4** (Pierce 2024). Stan 2.32 served as the computational backend. CMIP6 SST data were accessed from the Copernicus Climate Data Store (https://cds.climate.copernicus.eu/datasets/projections-cmip6; DOI: 10.24381/cds.c866074c). MCR LTER raw data are publicly archived through the EDI Data Portal (https://edirepository.org).
+
+# Session Information
+
+```{r session-info}
+#| label: session-info
+
+sessionInfo()
+```
