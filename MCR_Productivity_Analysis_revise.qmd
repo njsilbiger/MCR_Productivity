@@ -131,11 +131,15 @@ Turb <- read_csv(here("Data", "raw_data", "MCR_LTER_Macroalgal_CHN_2005_to_2024_
 write_csv(Turb, here("Data", "Turb_mean.csv"))
 
 # Water column nutrients (bimonthly surveys 2005-2018)
+# Samples are assigned to austral seasons: summer (Nov-Apr) and winter
+# (May-Oct). Sampling actually falls in Dec-Mar (summer) and Jun-Aug
+# (winter)
 water <- read_csv(here("Data", "raw_data", "WaterColumnN.csv")) |>
   filter(Cruise == "LTER bi-annual") |>
   mutate(
     Date = mdy(Date),
-    Year = year(Date)
+    Year = year(Date),
+    Season = if_else(month(Date) %in% c(11, 12, 1, 2, 3, 4), "Summer", "Winter")
   ) |>
   group_by(Year) |>
   summarise(across(Phosphate:Nitrite_and_Nitrate,  \(x) mean(x, na.rm = TRUE)), .groups = "drop") |>
@@ -336,13 +340,35 @@ All_PP_data <- All_PP_data |>
     Flow_mean = (UP_Velocity_mps + DN_Velocity_mps) / 2
   )
 
-# Calculate yearly averages
+# Calculate yearly averages by year and austral season, matching the
+# YearSeason resolution of the Bayesian PI-curve model
 Year_Averages_PP <- All_PP_data |>
   mutate(
     NP = PP,
     R = if_else(PP < 0, PP, NA_real_)
   ) |>
   group_by(Year) |>
+  summarise(
+    NP_mean = mean(NP, na.rm = TRUE),
+    NP_SE = sd(NP, na.rm = TRUE) / sqrt(n()),
+    NP_max = max(NP, na.rm = TRUE),
+    GP_mean = mean(GP, na.rm = TRUE),
+    GP_SE = sd(GP, na.rm = TRUE) / sqrt(n()),
+    R_mean = mean(R, na.rm = TRUE),
+    R_SE = sd(R, na.rm = TRUE) / sqrt(n()),
+    Temperature_mean = mean(Temperature_mean, na.rm = TRUE),
+    Flow_mean = mean(Flow_mean, na.rm = TRUE),
+    PAR_mean = mean(PAR[PAR > 0], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Also do it by Season
+YearSeason_Averages_PP <- All_PP_data |>
+  mutate(
+    NP = PP,
+    R = if_else(PP < 0, PP, NA_real_)
+  ) |>
+  group_by(Year, Season) |>
   summarise(
     NP_mean = mean(NP, na.rm = TRUE),
     NP_SE = sd(NP, na.rm = TRUE) / sqrt(n()),
@@ -450,7 +476,9 @@ LTER1_Pnet <- All_PP_data |>
     Flowmean = Flow_mean,
     flow_log = log(Flowmean),
     UPDN = as.factor(UPDN),
-    Year = as.factor(Year)
+    Year = as.factor(Year),
+    Season = as.factor(Season),
+    YearSeason = as.factor(paste(Year,Season))
   )
 
 # Fit the PI curve as a Bayesian non-linear model rather than ordinary least
@@ -510,6 +538,74 @@ cat(sprintf("  This indicates the model explains %.1f%% of variance in net produ
 write_csv(Year_Averages_PP, here("Data", "Year_Averages_PP.csv"))
 ```
 
+## FIT PI-curve by season as well
+
+```{r bayesian-pi-curve-season}
+#| label: bayesian-pi-curve-season
+#| cache: true
+#| dependson: ["process-pp"]
+
+# Fit the PI curve as a Bayesian non-linear model rather than ordinary least
+# squares because we need full uncertainty estimates on Pmax and Rd for each
+# year — those uncertainties propagate through the SEM later. The Student-t
+# likelihood handles the occasional outlier measurement without letting it
+# distort the curve. All three parameters (alpha, Pmax, Rd) are estimated
+# simultaneously across all years, with year-specific coefficients for each.
+# This will take a while — run with cache: true.
+fit1_f <- brm(
+  bf(
+    PP ~ ((alpha * Pmax * PAR) / (alpha * PAR + Pmax)) + Rd,
+    nl = TRUE,
+    alpha ~ 0 + YearSeason,
+    Pmax ~ 0 + YearSeason,
+    Rd ~ 0 + YearSeason
+  ) + student(),
+  data = LTER1_Pnet,
+  set_rescor(FALSE),
+  prior = c(
+    prior(normal(0.1, 10), nlpar = "alpha", lb = 0),
+    prior(normal(-100, 10), nlpar = "Rd", ub = 0),
+    prior(normal(100, 10), nlpar = "Pmax", lb = 0)
+  ),
+  control = list(adapt_delta = 0.95, max_treedepth = 20),
+  cores = 3,
+  chains = 3,
+  seed = 223,
+  iter = 8000,
+  warmup = 2000
+)
+
+# Extract Pmax and Rd coefficients
+names <- rownames(fixef(fit1_f))
+coefficients <- as_tibble(fixef(fit1_f)) |>
+  mutate(params = names)
+
+PRValues_season <- coefficients |>
+  # params look like "Pmax_YearSeason2008Summer" (brms strips the space in
+  # "2008 Summer"); extract year and season with regex
+  filter(str_detect(params, "^(Pmax|Rd)_")) |>
+  mutate(
+    param_type = str_extract(params, "^(Pmax|Rd)"),
+    year = as.numeric(str_extract(params, "[0-9]{4}")),
+    Season = str_extract(params, "(Summer|Winter)")
+  ) |>
+  select(Year = year, Season, Estimate, param_type) |>
+  pivot_wider(names_from = param_type, values_from = Estimate)
+
+# Combine with raw averages
+YearSeason_Averages_PP <- YearSeason_Averages_PP |>
+  full_join(PRValues_season, by = c("Year", "Season")) |>
+  mutate(Rd = -Rd) # Make Rd positive
+
+# Calculate Bayesian R²
+pi_curve_r2 <- median(bayes_R2(fit1_f)[, 1])
+cat(sprintf("\nPhotosynthesis-Irradiance Curve Model:\n"))
+cat(sprintf("  Bayesian R²: %.3f\n", pi_curve_r2))
+cat(sprintf("  This indicates the model explains %.1f%% of variance in net production\n", pi_curve_r2 * 100))
+
+write_csv(YearSeason_Averages_PP, here("Data", "YearSeason_Averages_PP.csv"))
+```
+
 ## 6. Integrate All Datasets
 
 ```{r integrate-data}
@@ -517,6 +613,7 @@ write_csv(Year_Averages_PP, here("Data", "Year_Averages_PP.csv"))
 
 # Read processed data files
 Year_Averages_PP <- read_csv(here("Data", "Year_Averages_PP.csv"))
+YearSeason_Averages_PP <- read_csv(here("Data", "YearSeason_Averages_PP.csv"))
 Turb <- read_csv(here("Data", "Turb_mean.csv"))
 water <- read_csv(here("Data", "Water_N_mean.csv"))
 insitu_temp <- read_csv(here("Data", "InSituTemp.csv"))
@@ -545,6 +642,22 @@ Year_Averages <- Year_Averages_PP |>
 
 # Display structure
 glimpse(Year_Averages)
+
+# Do it by year and season too
+# Create integrated dataset
+YearSeason_Averages <- YearSeason_Averages_PP |>
+  select(-c(NP_max:R_SE))|>
+  full_join(TotalLiving |> filter(Site == "LTER 1"), by = "Year") |>
+  full_join(water) |>
+  full_join(Turb, by = "Year") |>
+  full_join(insitu_temp, by = "Year") |>
+  full_join(fish_trophic, by = "Year") |>
+  mutate(log_coral = log(mean_coral)) |>
+  mutate(coral_dominance = log(mean_coral/mean_fleshy))|>
+  filter(Year < 2026) |>
+  mutate(benthic_R = Rd - Rfish_field_mmolO2_m2_h) |> # total R - fish R
+  arrange(Year, Season)
+
 ```
 
 
@@ -601,6 +714,8 @@ ggsave(
 
 fig1
 ```
+
+# Fish and benthic R
 ```{r}
 #| label: fig-R-fish-benthic
 #| cache: false
@@ -1044,269 +1159,940 @@ Year_Averages <- Year_Averages |>
     Max_temp_lag1    = lag(Max_temp)
   )
 
+# Season dataset: lag() on row order would pull the same year's Summer value
+# into Winter rows, so join the annual lags by Year instead.
+YearSeason_Averages <- YearSeason_Averages |>
+  select(-any_of(c("Herbivores_lag1", "Corallivore_lag1", "Max_temp_lag1"))) |>
+  left_join(
+    Year_Averages |> select(Year, Herbivores_lag1, Corallivore_lag1, Max_temp_lag1),
+    by = "Year"
+  ) |>
+  arrange(Year, Season)
 
+# Major disturbance years in Moorea (1 = disturbance, 0 = none).
+# Sources:
+#   COTS outbreak 2006-2010: Kayal et al. 2012, PLoS ONE 7:e47363,
+#     doi:10.1371/journal.pone.0047363; Adam et al. 2011, PLoS ONE 6:e23717,
+#     doi:10.1371/journal.pone.0023717
+#   Cyclone Oli, Feb 2010: Adam et al. 2011 (above)
+#   2016 bleaching: Hedouin et al. 2020, Coral Reefs,
+#     doi:10.1007/s00338-020-01914-w; lagoon bleaching in Donovan et al. 2020,
+#     PNAS, doi:10.1073/pnas.1915395117
+#   2019 marine heatwave/bleaching: Speare et al. 2021, Global Change
+#     Biology, doi:10.1111/gcb.16000
+# Caveat: COTS and Cyclone Oli impacts were concentrated on the fore reef;
+# effects on the LTER_1 back reef were smaller, so coding these years as
+# disturbances for the back reef is a judgement call.
+disturbance_years <- tribble(
+  ~Year, ~Disturbance_notes,
+  2006, "COTS outbreak (onset)",
+  2007, "COTS outbreak",
+  2008, "COTS outbreak",
+  2009, "COTS outbreak (peak)",
+  2010, "COTS outbreak (end) + Cyclone Oli (Feb 2010)",
+  2016, "Bleaching (3rd global bleaching event)",
+  2019, "Bleaching (marine heatwave)",
+  2024, "Bleaching (marine heatwave)"
+)
+
+add_disturbance <- function(d) {
+  d |>
+    # Drop existing columns so re-running the chunk interactively is safe
+    select(-any_of(c("Disturbance", "Disturbance_notes"))) |>
+    left_join(disturbance_years, by = "Year") |>
+    mutate(
+      Disturbance = if_else(is.na(Disturbance_notes), 0L, 1L),
+      Disturbance_notes = replace_na(Disturbance_notes, "None")
+    )
+}
+
+Year_Averages       <- add_disturbance(Year_Averages)
+YearSeason_Averages <- add_disturbance(YearSeason_Averages)
+
+Year_Averages |> select(Year, Disturbance, Disturbance_notes)
 ```
-
-
-## Structural Equation Modeling
-
+## Seasonal Structural Equation modeling
 Fit a Bayesian SEM to understand causal pathways among ecosystem components.
 | # | Equation |
 |---|----------|
 | 1 | Temperature ~ Year |
-| 2 | log(coral cover) \| trunc(ub = 3.39) ~ temperature + yearresid |
-| 3 | log(ecosystem respiration) ~ log(coral cover) + temperature |
-| 4 | log(fleshy macroalgae) \| trunc(ub = 2.26) ~ log(coral cover) |
-| 5 | log(Pmax) ~ log(coral cover) + temperature + log(ecosystem respiration) |
-| 6 | corallivore biomass ~ log(coral cover) |
-| 7 | herbivore biomass ~ log(fleshy macroalgae) |
-| 8 | log(nitrogen content) ~ log(ecosystem respiration) |
+| 2 | Benthic composition (coral, fleshy algae, other) ~ Dirichlet, with log(coral/other) ~ lag coral + temperature + disturbance (binary) + lag corallivores + log lagoon recruitment (3-yr lag), and log(fleshy algae/other) ~ lag fleshy algae + temperature + disturbance (binary) + lag herbivores |
+| 3 | log(ecosystem respiration) ~ log coral cover + log fleshy algae cover + temperature + Season + (1|Year) |
+| 4 | log(Pmax) ~ log coral cover + log fleshy algae cover + temperature + Season + log(N content) + (1|Year) |
+| 5 | log corallivore biomass ~ log coral cover |
+| 6 | log herbivore biomass ~ log fleshy algae cover |
+| 7 | log(nitrogen content) ~ log coral cover + log fleshy algae cover |
+| — | residual correlation between equations 3 and 4 (Rd ↔ Pmax) |
 
+Only ecosystem respiration and Pmax are measured seasonally. All other variables are annual values repeated across seasons, so equations 1, 2, 5, 6 and 7 are fit to one row per year using brms `subset()`. This avoids double-counting years. A `(1|Year)` term is not identifiable with one observation per year, so the year random intercept is kept only in the seasonal sub-models (3 and 4). Season enters as a centred fixed effect (Summer = +0.5, Winter = −0.5).
 
+Coral, fleshy algae and all other cover (sand, rubble, crustose coralline algae and remaining categories) are shares of the same total and are not independent. They are therefore modelled jointly as a three-part composition with a Dirichlet distribution, with "other" as the reference category. Coral and fleshy algae each have their own linear predictor, so coefficients are effects on log(coral/other) and log(fleshy algae/other); the effect on log(coral/fleshy algae) is the difference between the two. Each part's previous-year log ratio is included as a predictor (persistence), so the other coefficients are effects on the year-to-year change, and they carry into later years. Grazing is expected to act on fleshy algae and corallivory on coral, so lagged herbivore biomass enters the fleshy-algae predictor, and lagged corallivore biomass and lagged recruitment enter the coral predictor. For interpretability, composition effects are also reported as changes in percentage cover at the average composition. In the downstream equations, coral and fleshy algae enter as standardised log cover; herbivore biomass responds to fleshy algae and corallivore biomass to coral. A model using the single log ratio of coral to fleshy algae (coral dominance) is retained as a supplementary comparison.
 
+Coral recruitment on settlement tiles in the north lagoon at LTER 1 (TILES-1; spat per tile per year, log-transformed) enters the coral predictor with a 3-year lag, allowing for the time recruits need to reach a size detected in benthic surveys. Recruitment is missing for 2018 (one deployment period not sampled) and for 2004–2005 (before the series began), which the 3-year lag requires for 2021 and 2007–2008. These values are imputed jointly with the model using brms `mi()`, with an intercept-only imputation model so that imputed values are not pulled towards any time trend.
 
-All continuous responses were log-transformed and z-score standardised before modelling. The `yearresid` predictor is the residual of calendar year regressed on maximum annual temperature. Because calendar year is correlated with many concurrent processes (e.g., the 2010 *Acanthaster* outbreak and subsequent dynamics, shifts in fishing pressure, ocean acidification, and any undetected observer or sampling effects), `yearresid` represents an unresolved bundle of secular non-thermal pressures operating over 2005–2025 and cannot be attributed to any single mechanism. Cover responses were upper-truncated at the z-log scale equivalent of 100% cover to respect the biological ceiling; truncation values (3.39 for coral, 2.26 for fleshy macroaglae and turf algae) were verified to back-transform to exactly 100%.
+Coral and fleshy algae cover are correlated, and both affect N content (equation 7), so their direct and N-mediated paths to Pmax cannot be cleanly separated. Effects on Pmax and Rd are therefore summarised as total effects. The total effect of coral (or fleshy algae) cover on Pmax is its direct path plus the indirect path through N content. The total effect of N content equals its direct path, because N has no other route to Pmax in the model. Annual maximum temperature enters Rd and Pmax directly and also acts through coral and fleshy algae cover. Its total effects add the paths through log coral and log fleshy algae cover, evaluated at the average composition. These are within-year effects; because each benthic part depends on its previous value, part of a temperature effect also carries into later years, which these totals do not include.
 
-Missing predictor values (ecosystem respiration and temperature as predictors of Pmax; ecosystem respiration as predictor of N content) were handled via **brms** integrated missing-data imputation (`mi()` syntax). Priors were weakly informative: regression coefficients ~ Normal(0, 2); intercepts ~ Normal(0, 2); residual SDs ~ Normal$_+$(0, 0.25) for the temperature sub-model and Normal$_+$(0, 2) otherwise.
+Rd and Pmax come from the same incubations and share unmeasured drivers, so their residuals are modelled as correlated. brms cannot estimate residual correlations alongside `subset()`. The SEM is therefore fit as two blocks: (i) an annual block (equations 1, 2, 5, 6, 7) fit with `subset()` and no residual correlations; and (ii) a bivariate metabolism block (equations 3 and 4) fit to the seasonal rows with an estimated Rd–Pmax residual correlation and correlated year intercepts. The blocks share no parameters, and benthic cover and N content enter the metabolism block as observed data. With residual correlations fixed at zero across blocks, the joint posterior factorises, so this is equivalent to one SEM in which only Rd and Pmax have correlated errors.
 
-### Temporal autocorrelation in the coral sub-model
+Total fish biomass was left out of the respiration sub-model. The justification and a with-fish sensitivity model are given below under *Sensitivity: Rd sub-model with fish biomass*.
 
-The coral sub-model included a first-order autoregressive residual structure, specified as `ar(time = Year, p = 1)` within the **brms** formula. The AR(1) coefficient φ received a weakly informative Normal(0, 0.5) prior (the default in **brms**); all structural regression coefficients retained Normal(0, 2) priors. AR(1) was applied only to the coral sub-model because coral cover residuals showed the strongest temporal dependence; other residual series were inspected but showed weaker patterns. Three chains ran for 10,000 iterations (5,000 warmup) with adapt_delta = 0.99 and max_treedepth = 15. Convergence was assessed via Rhat (< 1.01 for all parameters), bulk and tail effective sample sizes (> 1,000), and posterior predictive checks.
+```{r sem-season-prep}
+#| label: sem-season-preparation
 
+# Standardise annual variables over one row per year and seasonal variables
+# over the seasonal rows, so years sampled in both seasons are not weighted
+# twice in the annual scaling.
+scale_on <- function(x, rows) {
+  (x - mean(x[rows], na.rm = TRUE)) / sd(x[rows], na.rm = TRUE)
+}
 
-```{r sem-prep}
-#| label: sem-preparation
+# Previous-year coral dominance and disturbance, lagged over one row per year
+# (YearSeason_Averages has two rows for years sampled in both seasons)
+annual_lags <- YearSeason_Averages |>
+  distinct(Year, .keep_all = TRUE) |>
+  arrange(Year) |>
+  transmute(Year,
+            coraldom_lag1    = lag(coral_dominance),
+            Disturbance_lag1 = lag(Disturbance),
+            # Previous-year log ratios of coral and fleshy algae to other cover
+            lr_coral_lag1    = lag(log(mean_coral / (100 - mean_coral - mean_fleshy))),
+            lr_fleshy_lag1   = lag(log(mean_fleshy / (100 - mean_coral - mean_fleshy))))
+stopifnot(all(diff(annual_lags$Year) == 1))
 
-# yearresid is the residual of calendar year after removing the temperature
-# trend. It captures everything else that changed systematically over 20 years
-# beyond warming — things like the 2010 Acanthaster outbreak, gradual shifts
-# in fishing pressure, ocean acidification, and any other unmeasured secular
-# drivers. It is deliberately a bundle of unresolved processes; we can't
-# attribute it to any single mechanism, but including it prevents omitted-
-# variable bias in the coral sub-model.
-yearresid <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
+# SDs of log coral and log fleshy algae cover over years, used to convert
+# Dirichlet effects to the standardised log-cover scale of the downstream
+# equations
+annual_cover <- YearSeason_Averages |>
+  distinct(Year, .keep_all = TRUE) |>
+  filter(!is.na(mean_coral))
+cover_log_sd <- c(coral  = sd(log(annual_cover$mean_coral / 100)),
+                  fleshy = sd(log(annual_cover$mean_fleshy / 100)))
 
-# Prepare scaled SEM data 
-semdata2 <- Year_Averages |>
+# Coral recruitment, north lagoon at LTER 1 (TILES-1): spat per tile summed
+# over tile sides and coral families, averaged over tiles, then summed over
+# the two deployment periods (Jan-Sep, Sep-Jan). Years missing a deployment
+# period are set to NA and imputed in the model with mi().
+recruit_lagoon <- read_csv(
+  here("Data", "raw_data", "MCR_LTER_CoralRecruit_TileSpatCounts_2006-2022_20250403.csv"),
+  show_col_types = FALSE
+) |>
+  filter(location == "TILES-1", habitat == "Lagoon") |>
+  group_by(nominal_year, season, tile_id) |>
+  summarise(spat = sum(count), .groups = "drop") |>
+  group_by(nominal_year, season) |>
+  summarise(mean_spat = mean(spat), .groups = "drop") |>
+  group_by(Year = nominal_year) |>
+  summarise(recruits = if (n() == 2) sum(mean_spat) else NA_real_, .groups = "drop")
+stopifnot(all(recruit_lagoon$recruits > 0, na.rm = TRUE))
+
+# Recruitment 3 years before each coral survey year (spat need several years
+# to reach a size detected in benthic surveys)
+annual_lags <- annual_lags |>
+  left_join(recruit_lagoon |> transmute(Year = Year + 3, recruits_lag3 = recruits),
+            by = "Year")
+
+semdata_season <- YearSeason_Averages |>
+  left_join(annual_lags, by = "Year") |>
+  arrange(Year, Season) |>
   mutate(
-    logfleshy = log(mean_fleshy),
-    logrd = log(Rd),
-    logpmax = log(Pmax), 
-    logproducers = log(mean_alive),
-    N_percent = log(N_percent),
-    yearresid = yearresid
+    annual_row       = !duplicated(Year),
+    seasonal_row     = !is.na(Season),
+    year_f           = factor(Year),
+    summer           = case_when(Season == "Summer" ~ 0.5,
+                                 Season == "Winter" ~ -0.5,
+                                 TRUE ~ 0),
+    temperature      = Max_temp,
+    coraldom         = coral_dominance,
+    logherbs_lag1    = log(Herbivores_lag1),
+    logcoralliv_lag1 = log(Corallivore_lag1),
+    logherbs         = log(Herbivores),
+    logcoralliv      = log(Corallivore),
+    logN             = log(N_percent),
+    logfish          = log(fish_biomass_g_m2),
+    logrd            = log(Rd),
+    logpmax          = log(Pmax),
+    logrec3          = log(recruits_lag3),
+    # Benthic composition (proportions) and standardised log cover
+    coral_prop       = mean_coral / 100,
+    fleshy_prop      = mean_fleshy / 100,
+    other_prop       = 1 - coral_prop - fleshy_prop,
+    logcoral_z       = log(coral_prop),
+    logfleshy_z      = log(fleshy_prop),
+    obs_id           = row_number()
   ) |>
+  # Lagged coral dominance uses coral dominance's own mean and SD, so the
+  # lag coefficient (phi) and the year-to-year change share one scale
+  mutate(coraldom_lag1 = (coraldom_lag1 - mean(coraldom[annual_row], na.rm = TRUE)) /
+           sd(coraldom[annual_row], na.rm = TRUE)) |>
+  mutate(
+    across(c(Year, temperature, coraldom, logherbs_lag1,
+             logcoralliv_lag1, logherbs, logcoralliv, logN, logrec3,
+             logcoral_z, logfleshy_z),
+           ~ scale_on(.x, annual_row)),
+    across(c(logfish, logrd, logpmax), ~ scale_on(.x, seasonal_row))
+  ) |>
+  # Per-equation subsets: annual sub-models use one row per year; each subset
+  # also requires complete response and predictors. Disturbance_lag1 is
+  # required for coral so the lagged-disturbance comparison uses the same rows.
+  mutate(
+    sub_temp     = annual_row & !is.na(temperature),
+    sub_coral    = annual_row & if_all(c(coraldom, coraldom_lag1, temperature,
+                                         Disturbance_lag1, logherbs_lag1,
+                                         logcoralliv_lag1), ~ !is.na(.x)),
+    # logfish is required here so the with-fish sensitivity model uses the
+    # same rows (needed for the LOO comparison)
+    sub_rd       = seasonal_row & if_all(c(logrd, coraldom, temperature, logfish), ~ !is.na(.x)),
+    sub_pmax     = seasonal_row & if_all(c(logpmax, coraldom, temperature, logN), ~ !is.na(.x)),
+    sub_coralliv = annual_row & !is.na(logcoralliv) & !is.na(coraldom),
+    sub_herbs    = annual_row & !is.na(logherbs) & !is.na(coraldom),
+    sub_N        = annual_row & !is.na(logN) & !is.na(coraldom)
+  ) |>
+  # Centre the lagged log ratios over the modelled years; they stay in
+  # log-ratio units so their coefficients are persistence parameters
+  mutate(lr_coral_lag1  = lr_coral_lag1 - mean(lr_coral_lag1[sub_coral]),
+         lr_fleshy_lag1 = lr_fleshy_lag1 - mean(lr_fleshy_lag1[sub_coral])) |>
   select(
-    Year, meancoral = mean_coral, logproducers, meanfleshy = mean_fleshy,
-    temperature = Max_temp, flow = Flow_mean, Npercent = N_percent,
-    logrd, logpmax, logcoral = log_coral, logfleshy, Corallivore,
-    herbs = Herbivores, yearresid
+    Year, year_f, obs_id, Season, summer, Disturbance, starts_with("sub_"),
+    temperature, coraldom, coraldom_lag1, Disturbance_lag1, logherbs_lag1,
+    logcoralliv_lag1, logherbs, logcoralliv, logN, coral_prop, fleshy_prop,
+    other_prop, lr_coral_lag1, lr_fleshy_lag1, logcoral_z, logfleshy_z,
+    logfish, logrd, logpmax, logrec3
   ) |>
-  drop_na(logcoral) |>
-  mutate(across(everything(), ~ as.numeric(scale(.x))))
+  # brms drops any row with an NA, even rows outside a subset. Every NA sits in
+  # a row excluded by that variable's subset flag, so a 0 placeholder is
+  # never used in the likelihood. Lagged recruitment keeps its NAs within the
+  # coral rows, where they are imputed with mi().
+  mutate(across(temperature:logpmax, ~ replace_na(.x, 0)),
+         logrec3 = if_else(sub_coral, logrec3, 0))
+
+# Dirichlet response: a matrix column of the three cover shares ("other" is
+# the reference category). Rows outside the coral subset get a placeholder
+# composition, which is never used in the likelihood.
+semdata_season$comp <- with(semdata_season, cbind(other = other_prop,
+                                                  coral = coral_prop,
+                                                  fleshy = fleshy_prop))
+semdata_season$comp[!semdata_season$sub_coral, ] <- 1 / 3
+stopifnot(all(semdata_season$comp > 0),
+          all(abs(rowSums(semdata_season$comp) - 1) < 1e-8))
+
+# Observations entering each sub-model
+colSums(select(semdata_season, starts_with("sub_")))
 ```
 
-```{r sem-fit}
-#| label: sem-model
+```{r sem-season-fit}
+#| label: sem-season-model
 #| cache: true
-#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
+#| dependson: ["sem-season-preparation", "lagged-covariates"]
 
-# Define SEM structure
-bf_temp <- bf(temperature | mi() ~ 1 + Year)
-bf_coraltemp <- bf(logcoral | trunc(ub = 3.39) ~ 1 + temperature + yearresid +
-                     ar(time = Year, p = 1))
-bf_logpmax <- bf(logpmax | mi() ~ 1 + logcoral + mi(temperature) + mi(logrd)) ####
-bf_logrd <- bf(logrd | mi() ~ 1 + logcoral + mi(temperature))
-bf_herbs <- bf(herbs | mi() ~ 1 + logfleshy)
-bf_corallivore <- bf(Corallivore | mi() ~ 1 + logcoral)
-bf_fleshy <- bf(logfleshy | trunc(ub = 2.26) ~ logcoral)
-bf_nutrients <- bf(Npercent | mi() ~ 1 + mi(logrd))
+# Families: continuous responses are log-transformed and z-scored, so
+# gaussian() on these scales is equivalent to lognormal on the raw scale.
+# Benthic cover is a three-part composition (coral, fleshy algae, other)
+# modelled with dirichlet(); coefficients are on the log(part / other) scale.
 
-# Fit the full Bayesian SEM. The key structural choice is the AR(1) term on
-# the coral sub-model — coral cover has strong year-to-year memory (a bad
-# bleaching year affects the next 5–10 years), and without AR(1) the credible
-# intervals on the temperature→coral path would be overconfident. We only
-# apply it to coral because the other sub-models showed much weaker residual
-# autocorrelation. The trunc(ub = ...) terms cap cover at 100% on the log
-# scale to respect the biological ceiling. 
-brms_sem_full <- brm(
-  bf_temp + bf_coraltemp + bf_logrd + bf_herbs + bf_corallivore +
-    bf_nutrients + bf_fleshy + bf_logpmax + set_rescor(FALSE),
-  data = semdata2,
+# Annual block: one row per year via subset(); no residual correlations
+bf_temp_s <- bf(temperature | subset(sub_temp) ~ 1 + Year, family = gaussian())
+
+# Each part has its own predictors: corallivores and recruitment act on
+# coral, herbivores on fleshy algae. mi() imputes missing recruitment;
+# index(obs_id) links the rows of the two subsetted equations.
+bf_comp <- bf(
+  comp | subset(sub_coral) ~ 1,
+  mucoral  ~ 1 + lr_coral_lag1 + temperature + Disturbance + logcoralliv_lag1 +
+    mi(logrec3, idx = obs_id),
+  mufleshy ~ 1 + lr_fleshy_lag1 + temperature + Disturbance + logherbs_lag1,
+  family = dirichlet()
+)
+bf_rec_s      <- bf(logrec3 | mi() + index(obs_id) + subset(sub_coral) ~ 1,
+                    family = gaussian())
+bf_coralliv_s <- bf(logcoralliv | subset(sub_coralliv) ~ 1 + logcoral_z, family = gaussian())
+bf_herbs_s    <- bf(logherbs | subset(sub_herbs) ~ 1 + logfleshy_z, family = gaussian())
+bf_N_s        <- bf(logN | subset(sub_N) ~ 1 + logcoral_z + logfleshy_z, family = gaussian())
+
+metab_resps  <- c("logrd", "logpmax")
+season_resps <- c("temperature", "coral", "fleshy", "logrd", "logpmax",
+                  "logcoralliv", "logherbs", "logN")
+
+annual_priors <- c(
+  set_prior("normal(0, 2)", class = "b", resp = "comp", dpar = "mucoral"),
+  set_prior("normal(0, 2)", class = "b", resp = "comp", dpar = "mufleshy"),
+  set_prior("normal(0, 2)", class = "Intercept", resp = "comp", dpar = "mucoral"),
+  set_prior("normal(0, 2)", class = "Intercept", resp = "comp", dpar = "mufleshy"),
+  do.call(c, lapply(c("temperature", "logcoralliv", "logherbs", "logN"), \(r) c(
+    set_prior("normal(0, 2)", class = "b", resp = r),
+    set_prior("normal(0, 2)", class = "Intercept", resp = r)
+  ))),
+  set_prior("normal(0, 2)", class = "Intercept", resp = "logrec3"),
+  set_prior("normal(0, 0.25)", class = "sigma", resp = "temperature", lb = 0)
+)
+
+brms_sem_season_annual <- brm(
+  bf_temp_s + bf_comp + bf_rec_s + bf_coralliv_s + bf_herbs_s + bf_N_s +
+    set_rescor(FALSE),
+  data = semdata_season,
   chains = 3,
   iter = 10000,
   warmup = 5000,
-  seed = 11,
+  seed = 6081,
   sample_prior = "no",
-  prior = c(
-    # b-class priors per response (only for responses that have non-mi() predictors)
-    # Npercent is excluded: its only predictor is mi(logrd) → class bsp, not b
-    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
-    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
-    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
-    set_prior("normal(0, 2)", class = "b", resp = "logpmax"),
-    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
-    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
-    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
-    # Intercept priors for all responses
-    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
-    # Response-specific essential priors
-    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
-    set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
-  ),
+  prior = annual_priors,
   control = list(adapt_delta = 0.99, max_treedepth = 15),
-  family = gaussian(),
   silent = 2,
   refresh = 0
 )
 ```
 
-```{r sem-summary}
-#| label: sem-results
+```{r sem-season-metab-fit}
+#| label: sem-season-metab-model
+#| cache: true
+#| dependson: ["sem-season-preparation"]
 
-summary(brms_sem_full)
+# Metabolism block: Rd and Pmax on the seasonal rows with correlated
+# residuals (rescor) and correlated year intercepts (|p|). rescor cannot be
+# combined with subset(), so the data are filtered instead.
+stopifnot(identical(semdata_season$sub_rd, semdata_season$sub_pmax))
+semdata_metab <- semdata_season |> filter(sub_rd)
+
+# Fish biomass is deliberately excluded from Rd (see the sensitivity
+# analysis below)
+bf_logrd_s   <- bf(logrd ~ 1 + logcoral_z + logfleshy_z + temperature + summer +
+                     (1 | p | year_f), family = gaussian())
+bf_logpmax_s <- bf(logpmax ~ 1 + logcoral_z + logfleshy_z + temperature + summer +
+                     logN + (1 | p | year_f), family = gaussian())
+
+# Year intercept SDs are identified only by the ~10 years sampled in both
+# seasons, so they get a tighter half-normal prior; LKJ(2) mildly shrinks
+# both correlations towards zero.
+metab_priors <- c(
+  do.call(c, lapply(metab_resps, \(r) set_prior("normal(0, 2)", class = "b", resp = r))),
+  do.call(c, lapply(metab_resps, \(r) set_prior("normal(0, 2)", class = "Intercept", resp = r))),
+  do.call(c, lapply(metab_resps, \(r) set_prior("normal(0, 0.5)", class = "sd", resp = r))),
+  set_prior("lkj(2)", class = "rescor"),
+  set_prior("lkj(2)", class = "cor")
+)
+
+brms_sem_season_metab <- brm(
+  bf_logrd_s + bf_logpmax_s + set_rescor(TRUE),
+  data = semdata_metab,
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 6081,
+  sample_prior = "no",
+  prior = metab_priors,
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  silent = 2,
+  refresh = 0
+)
 ```
 
-```{r}
-#| label: sem-r2-calculation
+```{r sem-season-summary}
+#| label: sem-season-results
 
-# Calculate Bayesian R² for each response variable in the SEM
-# Note: Some responses with missing data imputation may have NaN - filter these out
-sem_r2 <- bayes_R2(brms_sem_full, summary = FALSE)
-sem_r2_summary <- apply(sem_r2, 2, median, na.rm = TRUE)
+summary(brms_sem_season_annual)
+summary(brms_sem_season_metab)
+```
 
-# Remove NaN values
-sem_r2_valid <- sem_r2_summary[!is.na(sem_r2_summary)]
+```{r sem-season-r2}
+#| label: sem-season-r2-calculation
 
-cat("\n=== Structural Equation Model: Bayesian R² by Response ===\n\n")
-sem_r2_df <- tibble(
-  Response = names(sem_r2_valid),
-  R2 = sem_r2_valid
+# Bayesian R² (Gelman et al. 2019) and PSIS-LOO are computed from
+# posterior_epred() and log_lik() so both blocks, the per-equation subsets
+# and the Dirichlet parts are handled the same way.
+season_subsets <- c(temperature = "sub_temp", coral = "sub_coral",
+                    fleshy = "sub_coral", logrd = "sub_rd", logpmax = "sub_pmax",
+                    logcoralliv = "sub_coralliv", logherbs = "sub_herbs",
+                    logN = "sub_N")
+
+# Which block a response belongs to, and its rows in semdata_season (the
+# metabolism block's data are semdata_season[sub_rd, ] in the same order)
+season_fit  <- function(resp) {
+  if (resp %in% metab_resps) brms_sem_season_metab else brms_sem_season_annual
+}
+season_rows <- function(resp) semdata_season[[season_subsets[[resp]]]]
+
+# Coral and fleshy algae are parts of the Dirichlet response "comp"
+season_y <- function(resp) {
+  col <- if (resp %in% c("coral", "fleshy")) paste0(resp, "_prop") else resp
+  semdata_season[[col]][season_rows(resp)]
+}
+season_draws <- function(resp, type = c("epred", "predict"), fit = season_fit(resp),
+                         draw_ids = NULL) {
+  fun <- switch(match.arg(type), epred = posterior_epred, predict = posterior_predict)
+  if (resp %in% c("coral", "fleshy")) {
+    fun(fit, resp = "comp", draw_ids = draw_ids)[, , resp]
+  } else {
+    fun(fit, resp = resp, draw_ids = draw_ids)
+  }
+}
+
+# Combined fixed effects from both blocks (coefficient names are unique)
+season_fixef <- function(annual = brms_sem_season_annual,
+                         metab  = brms_sem_season_metab) {
+  rbind(fixef(annual), fixef(metab))
+}
+
+bayes_r2_resp <- function(resp, fit = season_fit(resp)) {
+  y  <- season_y(resp)
+  mu <- season_draws(resp, "epred", fit = fit)
+  stopifnot(ncol(mu) == length(y))
+  var_mu  <- apply(mu, 1, var)
+  var_res <- apply(sweep(mu, 2, y), 1, var)
+  median(var_mu / (var_mu + var_res))
+}
+
+# resp = NULL gives the joint pointwise log-likelihood of a block
+loo_block <- function(fit, resp = NULL) {
+  ll <- log_lik(fit, resp = resp)
+  chain_id <- rep(seq_len(nchains(fit)), each = ndraws(fit) / nchains(fit))
+  loo::loo(ll, r_eff = loo::relative_eff(exp(ll), chain_id = chain_id))
+}
+
+season_resp_labels <- c(
+  temperature = "Temperature",       coral       = "Coral Cover",
+  fleshy      = "Fleshy Algae Cover", logherbs   = "Herbivorous Fish",
+  logcoralliv = "Corallivore Fish",  logN        = "N Content",
+  logrd       = "Ecosystem Rd",      logpmax     = "Ecosystem Pmax"
+)
+
+tibble(
+  Response = season_resp_labels[season_resps],
+  R2       = sapply(season_resps, bayes_r2_resp)
 ) |>
-  mutate(Response = case_when(
-    Response == "R2temperature" ~ "Temperature",
-    Response == "R2logcoral" ~ "Coral Cover",
-    Response == "R2logpmax" ~ "Ecosystem Pmax",
-    Response == "R2logrd" ~ "Ecosystem Rd",
-    Response == "R2herbs" ~ "Herbivorous Fish",
-    Response == "R2Corallivore" ~ "Corallivore Fish",
-    Response == "R2logfleshy" ~ "Fleshy Macroalgae and Turf",
-    Response == "R2Npercent" ~ "N Content",
-    TRUE ~ Response
-  )) |>
   arrange(desc(R2))
-
-print(sem_r2_df, n = Inf)
-
-cat("\n")
-cat(sprintf("Mean R² across computable responses: %.3f\n", mean(sem_r2_valid)))
-cat(sprintf("The SEM explains between %.1f%% and %.1f%% of variance across responses.\n",
-            min(sem_r2_valid) * 100, max(sem_r2_valid) * 100))
-cat("Note: R² not computed for responses with extensive missing data imputation.\n")
 ```
 
-## SEM Conceptual Model
+### Benthic composition: coral and fleshy algae
 
-```{r sem-dag}
-#| label: fig-sem-dag
+```{r sem-season-composition-effects}
+#| label: sem-season-composition-effects
+
+# Fixed decimals with a true minus sign for inline reporting
+fmt <- function(x, digits = 2) {
+  sub("^-", "\u2212", formatC(x, format = "f", digits = digits))
+}
+summarise_effect <- function(x) {
+  tibble(median = median(x), lo95 = quantile(x, 0.025),
+         hi95 = quantile(x, 0.975), p_positive = mean(x > 0))
+}
+# Path coefficient from either block as "est (95% CI lo, hi)"
+path_text <- function(term) {
+  fe <- season_fixef()
+  sprintf("%s (95%% CI %s, %s)", fmt(fe[term, "Estimate"]),
+          fmt(fe[term, "Q2.5"]), fmt(fe[term, "Q97.5"]))
+}
+
+draws_annual <- as_draws_df(brms_sem_season_annual)
+
+# Cover shares implied by the two Dirichlet linear predictors ("other" = 0)
+softmax_shares <- function(mc, mf) {
+  den <- 1 + exp(mc) + exp(mf)
+  cbind(other = 1 / den, coral = exp(mc) / den, fleshy = exp(mf) / den)
+}
+# Average composition: intercepts, with lagged log ratios centred,
+# continuous predictors standardised and Disturbance = 0
+mc0 <- draws_annual$b_mucoral_comp_Intercept
+mf0 <- draws_annual$b_mufleshy_comp_Intercept
+base_shares <- softmax_shares(mc0, mf0)
+# Change in percentage cover for given shifts in the two linear predictors
+pp_change <- function(dc, df) 100 * (softmax_shares(mc0 + dc, mf0 + df) - base_shares)
+
+# Dirichlet coefficient draws; mi() terms are stored with a "bsp_" prefix
+dirichlet_draw <- function(part, x) {
+  nm <- paste0(c("b_", "bsp_"), "mu", part, "_comp_", x)
+  draws_annual[[nm[nm %in% names(draws_annual)][1]]]
+}
+b_c <- function(x) dirichlet_draw("coral", x)
+b_f <- function(x) dirichlet_draw("fleshy", x)
+dist_pp <- pp_change(b_c("Disturbance"), b_f("Disturbance"))
+temp_pp <- pp_change(b_c("temperature"), b_f("temperature"))
+
+comp_effect_draws <- list(
+  base_coral       = 100 * base_shares[, "coral"],
+  base_fleshy      = 100 * base_shares[, "fleshy"],
+  base_other       = 100 * base_shares[, "other"],
+  dist_coral_pp    = dist_pp[, "coral"],
+  dist_fleshy_pp   = dist_pp[, "fleshy"],
+  dist_other_pp    = dist_pp[, "other"],
+  dist_ratio       = b_c("Disturbance") - b_f("Disturbance"),
+  temp_coral_pp    = temp_pp[, "coral"],
+  temp_fleshy_pp   = temp_pp[, "fleshy"],
+  temp_other_pp    = temp_pp[, "other"],
+  temp_ratio       = b_c("temperature") - b_f("temperature"),
+  persist_coral    = b_c("lr_coral_lag1"),
+  persist_fleshy   = b_f("lr_fleshy_lag1"),
+  recruit_coral    = b_c("milogrec3idxEQobs_id"),
+  coralliv_coral   = b_c("logcoralliv_lag1"),
+  herbs_fleshy     = b_f("logherbs_lag1")
+)
+comp_effects <- map_dfr(comp_effect_draws, summarise_effect, .id = "effect")
+
+comp_text <- function(e, p = FALSE, digits = 2) {
+  r <- filter(comp_effects, effect == e)
+  paste0(sprintf("%s (95%% CI %s, %s)", fmt(r$median, digits), fmt(r$lo95, digits),
+                 fmt(r$hi95, digits)),
+         if (p) sprintf("; P(> 0) = %s", fmt(r$p_positive)) else "")
+}
+
+comp_labels <- c(
+  base_coral     = "Coral cover (%)",
+  base_fleshy    = "Fleshy algae cover (%)",
+  base_other     = "Other cover (%)",
+  dist_coral_pp  = "Coral cover (percentage points)",
+  dist_fleshy_pp = "Fleshy algae cover (percentage points)",
+  dist_other_pp  = "Other cover (percentage points)",
+  dist_ratio     = "log(coral / fleshy algae)",
+  temp_coral_pp  = "Coral cover (percentage points)",
+  temp_fleshy_pp = "Fleshy algae cover (percentage points)",
+  temp_other_pp  = "Other cover (percentage points)",
+  temp_ratio     = "log(coral / fleshy algae)",
+  persist_coral  = "Coral, previous year's log ratio",
+  persist_fleshy = "Fleshy algae, previous year's log ratio",
+  recruit_coral  = "Lagoon recruitment (t\u22123) \u2192 coral",
+  coralliv_coral = "Corallivore biomass (t\u22121) \u2192 coral",
+  herbs_fleshy   = "Herbivore biomass (t\u22121) \u2192 fleshy algae"
+)
+
+comp_effects |>
+  mutate(effect = comp_labels[effect],
+         across(where(is.double), \(x) round(x, 2))) |>
+  kbl(col.names = c("Effect", "Median", "2.5%", "97.5%", "P(> 0)"),
+      align = c("l", "r", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "left") |>
+  pack_rows("Average composition", 1, 3) |>
+  pack_rows("Disturbance year", 4, 7) |>
+  pack_rows("Temperature (+1 SD)", 8, 11) |>
+  pack_rows("Persistence (log-ratio scale)", 12, 13) |>
+  pack_rows("Biotic drivers (log-ratio vs other)", 14, 16)
+```
+
+At the average composition (coral `r comp_text("base_coral", digits = 1)`%, fleshy algae `r comp_text("base_fleshy", digits = 1)`%), disturbance years changed fleshy algae cover by `r comp_text("dist_fleshy_pp", p = TRUE, digits = 1)` percentage points and coral cover by `r comp_text("dist_coral_pp", p = TRUE, digits = 1)` percentage points. A 1-SD increase in maximum temperature changed coral cover by `r comp_text("temp_coral_pp", digits = 1)` and fleshy algae cover by `r comp_text("temp_fleshy_pp", digits = 1)` percentage points. Lagged herbivore biomass had a log-ratio effect on fleshy algae of `r comp_text("herbs_fleshy")`, and lagged corallivore biomass an effect on coral of `r comp_text("coralliv_coral")`. In the other direction, herbivore biomass increased with fleshy algae cover (`r path_text("logherbs_logfleshy_z")`) and corallivore biomass with coral cover (`r path_text("logcoralliv_logcoral_z")`). Lagged lagoon recruitment had an effect on coral of `r comp_text("recruit_coral")`.
+
+### Total effects on Pmax and Rd
+
+```{r sem-season-pmax-effects}
+#| label: sem-season-pmax-effects
+
+# Indirect paths multiply coefficients from the annual block by coefficients
+# from the metabolism block. The two blocks' posteriors are independent, so
+# pairing draws by index is valid.
+draws_metab <- as_draws_df(brms_sem_season_metab)
+stopifnot(nrow(draws_annual) == nrow(draws_metab))
+
+# Temperature effect on standardised log coral and log fleshy algae cover at
+# the average composition: d log(p_k) / dT = b_k - sum_j p_j * b_j ("other"
+# has b = 0), divided by the SD of log cover
+p_c <- base_shares[, "coral"]
+p_f <- base_shares[, "fleshy"]
+b_temp_c <- b_c("temperature")
+b_temp_f <- b_f("temperature")
+mean_b   <- p_c * b_temp_c + p_f * b_temp_f
+dcoral_dtemp  <- (b_temp_c - mean_b) / cover_log_sd[["coral"]]
+dfleshy_dtemp <- (b_temp_f - mean_b) / cover_log_sd[["fleshy"]]
+
+pmax_effect_draws <- tibble(
+  # Pmax
+  coral_direct     = draws_metab$b_logpmax_logcoral_z,
+  coral_indirect   = draws_annual$b_logN_logcoral_z * draws_metab$b_logpmax_logN,
+  coral_total      = coral_direct + coral_indirect,
+  fleshy_direct    = draws_metab$b_logpmax_logfleshy_z,
+  fleshy_indirect  = draws_annual$b_logN_logfleshy_z * draws_metab$b_logpmax_logN,
+  fleshy_total     = fleshy_direct + fleshy_indirect,
+  # N has no other route to Pmax, so its total effect is its direct path
+  N_total          = draws_metab$b_logpmax_logN,
+  temp_direct_pmax = draws_metab$b_logpmax_temperature,
+  temp_total_pmax  = temp_direct_pmax + dcoral_dtemp * coral_total +
+    dfleshy_dtemp * fleshy_total,
+  # Rd (cover has no other route to Rd, so totals equal direct paths)
+  coral_total_rd   = draws_metab$b_logrd_logcoral_z,
+  fleshy_total_rd  = draws_metab$b_logrd_logfleshy_z,
+  temp_direct_rd   = draws_metab$b_logrd_temperature,
+  temp_total_rd    = temp_direct_rd + dcoral_dtemp * coral_total_rd +
+    dfleshy_dtemp * fleshy_total_rd
+)
+
+pmax_effects <- map_dfr(pmax_effect_draws, summarise_effect, .id = "effect")
+
+# "median (95% CI lo, hi)", optionally with the posterior probability > 0
+effect_text <- function(e, p = FALSE) {
+  r <- filter(pmax_effects, effect == e)
+  paste0(sprintf("%s (95%% CI %s, %s)", fmt(r$median), fmt(r$lo95), fmt(r$hi95)),
+         if (p) sprintf("; P(> 0) = %s", fmt(r$p_positive)) else "")
+}
+
+effect_labels <- c(
+  coral_direct     = "Coral cover \u2192 Pmax, direct",
+  coral_indirect   = "Coral cover \u2192 N \u2192 Pmax, indirect",
+  coral_total      = "Coral cover \u2192 Pmax, total",
+  fleshy_direct    = "Fleshy algae \u2192 Pmax, direct",
+  fleshy_indirect  = "Fleshy algae \u2192 N \u2192 Pmax, indirect",
+  fleshy_total     = "Fleshy algae \u2192 Pmax, total",
+  N_total          = "N \u2192 Pmax, total (= direct)",
+  temp_direct_pmax = "Temperature \u2192 Pmax, direct",
+  temp_total_pmax  = "Temperature \u2192 Pmax, total (incl. via cover and N)",
+  coral_total_rd   = "Coral cover \u2192 Rd, total (= direct)",
+  fleshy_total_rd  = "Fleshy algae \u2192 Rd, total (= direct)",
+  temp_direct_rd   = "Temperature \u2192 Rd, direct",
+  temp_total_rd    = "Temperature \u2192 Rd, total (incl. via cover)"
+)
+
+pmax_effects |>
+  mutate(effect = effect_labels[effect],
+         across(where(is.double), \(x) round(x, 2))) |>
+  kbl(col.names = c("Effect", "Median", "2.5%", "97.5%", "P(> 0)"),
+      align = c("l", "r", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "left") |>
+  pack_rows("Pmax", 1, 9) |>
+  pack_rows("Rd", 10, 13) |>
+  row_spec(which(grepl("total", names(effect_labels))), bold = TRUE)
+```
+
+Coral cover had a total effect on Pmax of `r effect_text("coral_total", p = TRUE)` (direct `r effect_text("coral_direct")`; through N content `r effect_text("coral_indirect")`), and fleshy algae cover a total effect of `r effect_text("fleshy_total", p = TRUE)`. The total effect of N content on Pmax was `r effect_text("N_total", p = TRUE)`. Rd was related to coral cover (`r effect_text("coral_total_rd", p = TRUE)`) and fleshy algae cover (`r effect_text("fleshy_total_rd", p = TRUE)`). Maximum temperature had direct effects of `r effect_text("temp_direct_pmax")` on Pmax and `r effect_text("temp_direct_rd")` on Rd; including its effects through benthic cover (and N), its total effects were `r effect_text("temp_total_pmax", p = TRUE)` on Pmax and `r effect_text("temp_total_rd", p = TRUE)` on Rd.
+
+### Coral and fleshy algae cover around disturbances
+
+Coral dominance is a log ratio, so a disturbance that reduces both coral and fleshy algae can leave it nearly unchanged. Plotting the two components separately shows whether the ratio hides coral losses.
+
+```{r sem-season-cover-disturbance}
+#| label: fig-sem-season-cover-disturbance
+#| fig-cap: "Annual coral and fleshy algae cover at LTER 1 (top) and year-to-year change in cover (bottom). Grey bands mark disturbance years (COTS outbreak 2006\u20132010, Cyclone Oli 2010, bleaching 2016, 2019 and 2024)."
+#| fig-width: 10
+#| fig-height: 7
+
+cover_long <- YearSeason_Averages |>
+  distinct(Year, .keep_all = TRUE) |>
+  select(Year, Disturbance, Coral = mean_coral, `Fleshy algae` = mean_fleshy) |>
+  pivot_longer(c(Coral, `Fleshy algae`), names_to = "Group", values_to = "cover") |>
+  filter(!is.na(cover)) |>
+  arrange(Group, Year) |>
+  group_by(Group) |>
+  mutate(change = cover - lag(cover)) |>
+  ungroup()
+
+dist_bands <- annotate("rect", xmin = disturbance_years$Year - 0.5,
+                       xmax = disturbance_years$Year + 0.5,
+                       ymin = -Inf, ymax = Inf, fill = "grey60", alpha = 0.2)
+
+p_cover <- ggplot(cover_long, aes(Year, cover, color = Group)) +
+  dist_bands +
+  geom_line() +
+  geom_point() +
+  labs(x = NULL, y = "Cover (%)", color = NULL)
+
+p_change <- ggplot(filter(cover_long, !is.na(change)), aes(Year, change, color = Group)) +
+  dist_bands +
+  geom_hline(yintercept = 0) +
+  geom_line() +
+  geom_point() +
+  labs(y = "Change from previous year (% cover)", color = NULL)
+
+(p_cover / p_change) + plot_layout(guides = "collect")
+```
+
+```{r sem-season-cover-disturbance-summary}
+#| label: sem-season-cover-disturbance-summary
+
+# Mean year-to-year change in each component, in disturbance years and in the
+# year after a disturbance
+cover_long |>
+  left_join(annual_lags |> select(Year, Disturbance_lag1), by = "Year") |>
+  filter(!is.na(change)) |>
+  mutate(year_type = case_when(
+    Disturbance == 1 ~ "Disturbance year",
+    Disturbance_lag1 == 1 ~ "Year after disturbance",
+    TRUE ~ "Other"
+  )) |>
+  group_by(Group, year_type) |>
+  summarise(n = n(), mean_change = mean(change), .groups = "drop") |>
+  mutate(mean_change = round(mean_change, 1))
+```
+
+### Posterior predictive checks
+
+Checks for both blocks are built from `posterior_predict()` with **bayesplot**, so the per-equation subsets of the annual block, the Dirichlet parts and the bivariate metabolism block are handled the same way. Rd and Pmax are additionally checked by season (mean and SD), against time, and for their joint correlation, since those are the only seasonally resolved responses.
+
+```{r sem-season-ppc}
+#| label: fig-sem-season-ppc
+#| fig-cap: "Posterior predictive density overlays for each sub-model of the seasonal SEM (dark line = observed; light lines = 100 posterior predictive draws). Coral and fleshy algae are cover proportions from the Dirichlet composition."
+#| fig-width: 12
+#| fig-height: 6
+
+set.seed(3517)
+
+# Observed values, predictive draws and row metadata for one sub-model
+ppc_parts <- function(resp, ndraws = NULL, fit = season_fit(resp)) {
+  rows  <- season_rows(resp)
+  draws <- if (is.null(ndraws)) NULL else sample(ndraws(fit), ndraws)
+  list(
+    y    = season_y(resp),
+    yrep = season_draws(resp, "predict", fit = fit, draw_ids = draws),
+    meta = semdata_season[rows, c("year_f", "Season")]
+  )
+}
+
+ppc_season <- lapply(names(season_resp_labels), \(r) ppc_parts(r, ndraws = 100)) |>
+  setNames(names(season_resp_labels))
+
+wrap_plots(lapply(names(season_resp_labels), \(r)
+  ppc_dens_overlay(ppc_season[[r]]$y, ppc_season[[r]]$yrep) +
+    ggtitle(season_resp_labels[[r]]) +
+    theme(legend.position = "none")
+), ncol = 4)
+```
+
+```{r sem-season-ppc-rd-pmax}
+#| label: fig-sem-season-ppc-rd-pmax
+#| fig-cap: "Posterior predictive checks for the Rd and Pmax sub-models. Top: 50% and 95% predictive intervals by year (Summer offset left, Winter right). Bottom: predicted vs observed mean and SD within each season."
+#| fig-width: 12
+#| fig-height: 7
+
+ppc_rd_pmax_plot <- function(r) {
+  p  <- ppc_season[[r]]
+  yr <- as.numeric(as.character(p$meta$year_f)) +
+    if_else(p$meta$Season == "Summer", -0.15, 0.15)
+  (ppc_intervals(p$y, p$yrep, x = yr, prob_outer = 0.95) +
+     labs(x = "Year", title = season_resp_labels[[r]])) /
+    (ppc_stat_grouped(p$y, p$yrep, group = p$meta$Season, stat = "mean", binwidth = 0.1) +
+       ggtitle("Mean") +
+       ppc_stat_grouped(p$y, p$yrep, group = p$meta$Season, stat = "sd", binwidth = 0.05) +
+       ggtitle("SD")) &
+    theme(legend.position = "none")
+}
+
+wrap_elements(ppc_rd_pmax_plot("logrd")) | wrap_elements(ppc_rd_pmax_plot("logpmax"))
+```
+
+```{r sem-season-ppc-stats}
+#| label: sem-season-ppc-stats
+
+# Bayesian p-values for season-specific mean and SD (values near 0 or 1
+# indicate misfit) and 95% predictive-interval coverage, using all draws
+ppc_season_stats <- function(r) {
+  p  <- ppc_parts(r)
+  lo <- apply(p$yrep, 2, quantile, 0.025)
+  hi <- apply(p$yrep, 2, quantile, 0.975)
+  map_dfr(c("Summer", "Winter"), \(g) {
+    i <- p$meta$Season == g
+    tibble(
+      Response   = season_resp_labels[[r]],
+      Season     = g,
+      n          = sum(i),
+      obs_sd     = sd(p$y[i]),
+      pred_sd    = median(apply(p$yrep[, i], 1, sd)),
+      p_mean     = mean(rowMeans(p$yrep[, i]) >= mean(p$y[i])),
+      p_sd       = mean(apply(p$yrep[, i], 1, sd) >= sd(p$y[i])),
+      coverage95 = mean(p$y[i] >= lo[i] & p$y[i] <= hi[i])
+    )
+  })
+}
+
+bind_rows(ppc_season_stats("logrd"), ppc_season_stats("logpmax")) |>
+  mutate(across(where(is.double), \(x) round(x, 2)))
+
+# Joint check: does the metabolism block reproduce the observed Rd-Pmax
+# correlation? Joint draws are [draw, observation, response].
+yrep_metab <- posterior_predict(brms_sem_season_metab)
+rep_cor    <- apply(yrep_metab, 1, \(m) cor(m[, 1], m[, 2]))
+obs_cor    <- cor(semdata_metab$logrd, semdata_metab$logpmax)
+tibble(
+  obs_cor      = obs_cor,
+  pred_cor     = median(rep_cor),
+  pred_cor_lo  = quantile(rep_cor, 0.025),
+  pred_cor_hi  = quantile(rep_cor, 0.975),
+  p_cor        = mean(rep_cor >= obs_cor)
+) |>
+  mutate(across(everything(), \(x) round(x, 2)))
+```
+
+### Seasonal SEM conceptual model
+
+```{r sem-season-dag}
+#| label: fig-sem-season-dag
 #| cache: false
-#| fig-cap: "**Figure 3.** Directed acyclic graph (DAG) of the full Bayesian multivariate structural equation model (SEM)."
-#| fig-width: 9
-#| fig-height: 4.2
+#| fig-cap: "**Figure 3b.** Directed acyclic graph (DAG) of the seasonal Bayesian multivariate SEM. Coral and fleshy algae cover are parts of one Dirichlet composition (bracket; the third part is other cover), so arrows into them are effects on log(part / other cover); \u03c6 is each part's persistence from the previous year. Dashed arrows are lagged effects (1 year, or 3 years for lagoon recruitment); the dotted double-headed arc is the Rd\u2013Pmax residual correlation; the box gives total within-year effects (direct + indirect). Disturbance (0/1) and Season (Summer = +0.5, Winter = \u22120.5) coefficients are differences between groups, not per-SD effects."
+#| fig-width: 10
+#| fig-height: 5.6
 
 pos_col  <- "#1565C0"
 neg_col  <- "#B71C1C"
 nsig_col <- "#AAAAAA"
 
+fe_season <- season_fixef()
 
-dag_nodes <- tribble(
-  ~id,           ~label,                    ~x,    ~y,    ~fill,       ~border,
-  "Year",        "Year",                    0.4,   3.5,   "white",     "#888888",
-  "Temp",        "Temperature",             2.0,   3.0,   "white",     "#888888",
-  "Coral",       "Coral\nCover",            3.8,   3.0,   "#E8F5E9",   "#2E7D32",
-  # Ecosystem function: Rd and Pmax in horizontal row; N elevated above
-  "Rd",          "Ecosystem\nRespiration",  5.6,   4.0,   "#EDE7F6",   "#4527A0",
-  "N",           "N\nStock",               7.4,   5.0,   "#FFF8E1",   "#E65100",
-  "Pmax",        "Ecosystem\nPmax",         9.2,   4.0,   "#EDE7F6",   "#4527A0",
-  # Community composition row
-  "Algae",       "Fleshy\nAlgae",           5.6,   2.0,   "#E8F5E9",   "#2E7D32",
-  "Herbs",       "Herbivore\nFish",         7.4,   2.0,   "#E3F2FD",   "#0D47A1",
-  "Corallivore", "Corallivore\nFish",       9.2,   2.0,   "#E3F2FD",   "#0D47A1"
+sdag_nodes <- tribble(
+  ~id,           ~label,                     ~x,   ~y,   ~fill,     ~border,
+  "Year",        "Year",                     0.4,  4.9,  "white",   "#888888",
+  "Temp",        "Max\nTemperature",         1.9,  4.9,  "white",   "#888888",
+  "Dist",        "Disturbance",              1.9,  2.7,  "white",   "#888888",
+  "Recruit",     "Lagoon\nRecruitment",      1.9,  0.9,  "white",   "#888888",
+  # Benthic composition (Dirichlet parts)
+  "Coral",       "Coral Cover",              4.1,  3.6,  "#E8F5E9", "#2E7D32",
+  "Algae",       "Fleshy Algae Cover",       4.1,  1.8,  "#E8F5E9", "#2E7D32",
+  # Ecosystem function
+  "Season",      "Season\n(Summer)",         7.8,  6.1,  "white",   "#888888",
+  "Rd",          "Ecosystem\nRespiration",   6.1,  5.0,  "#EDE7F6", "#4527A0",
+  "Pmax",        "Ecosystem\nPmax",          9.5,  5.0,  "#EDE7F6", "#4527A0",
+  "N",           "N\nContent",               7.7,  3.4,  "#FFF8E1", "#E65100",
+  # Community composition
+  "Herbs",       "Herbivore\nFish",          6.5,  0.8,  "#E3F2FD", "#0D47A1",
+  "Corallivore", "Corallivore\nFish",        9.3,  2.0,  "#E3F2FD", "#0D47A1"
+) |>
+  # Persistence (previous-year log ratio) shown inside the benthic nodes
+  mutate(label = case_when(
+    id == "Coral" ~ sprintf("%s\n\u03c6 = %.2f (t\u22121)", label,
+                            fe_season["mucoral_comp_lr_coral_lag1", "Estimate"]),
+    id == "Algae" ~ sprintf("%s\n\u03c6 = %.2f (t\u22121)", label,
+                            fe_season["mufleshy_comp_lr_fleshy_lag1", "Estimate"]),
+    TRUE ~ label
+  ))
+
+# Estimates are pulled from the fitted models; only layout is set by hand.
+# pos = position of the label along the edge; loff = label offset.
+sdag_map <- tribble(
+  ~coef,                                 ~from,         ~to,           ~lag, ~curv, ~pos, ~loff_x, ~loff_y,
+  "temperature_Year",                    "Year",        "Temp",        "",    0,    0.50,  0.00,   0.20,
+  "mucoral_comp_temperature",            "Temp",        "Coral",       "",    0,    0.55,  0.22,   0.08,
+  "mufleshy_comp_temperature",           "Temp",        "Algae",       "",    0,    0.30, -0.30,   0.00,
+  "mucoral_comp_Disturbance",            "Dist",        "Coral",       "",    0,    0.28,  0.00,   0.16,
+  "mufleshy_comp_Disturbance",           "Dist",        "Algae",       "",    0,    0.28,  0.00,  -0.16,
+  "mucoral_comp_milogrec3idxEQobs_id",   "Recruit",     "Coral",       "t\u22123", 0, 0.22, -0.40, 0.00,
+  "mucoral_comp_logcoralliv_lag1",       "Corallivore", "Coral",       "t\u22121", -0.25, 0.50, 0.00, -0.55,
+  "mufleshy_comp_logherbs_lag1",         "Herbs",       "Algae",       "t\u22121", -0.40, 0.50, 0.00, -0.55,
+  "logcoralliv_logcoral_z",              "Coral",       "Corallivore", "",    0,    0.75,  0.10,   0.18,
+  "logherbs_logfleshy_z",                "Algae",       "Herbs",       "",    0,    0.55,  0.20,   0.12,
+  "logN_logcoral_z",                     "Coral",       "N",           "",    0,    0.70,  0.00,   0.15,
+  "logN_logfleshy_z",                    "Algae",       "N",           "",    0,    0.52,  0.05,  -0.20,
+  "logrd_logcoral_z",                    "Coral",       "Rd",          "",    0,    0.45, -0.22,   0.08,
+  "logrd_logfleshy_z",                   "Algae",       "Rd",          "",    0,    0.62,  0.25,   0.00,
+  "logrd_temperature",                   "Temp",        "Rd",          "",    0,    0.50,  0.00,   0.15,
+  "logrd_summer",                        "Season",      "Rd",          "",    0,    0.50, -0.20,   0.15,
+  "logpmax_logcoral_z",                  "Coral",       "Pmax",        "",    0,    0.62,  0.00,   0.16,
+  "logpmax_logfleshy_z",                 "Algae",       "Pmax",        "",    0,    0.88,  0.30,  -0.05,
+  "logpmax_temperature",                 "Temp",        "Pmax",        "",   -0.20, 0.50,  0.00,   0.85,
+  "logpmax_summer",                      "Season",      "Pmax",        "",    0,    0.50,  0.20,   0.15,
+  "logpmax_logN",                        "N",           "Pmax",        "",    0,    0.50,  0.22,  -0.08
+)
+stopifnot(all(sdag_map$coef %in% rownames(fe_season)))
+
+sdag_edges <- sdag_map |>
+  mutate(
+    est       = fe_season[coef, "Estimate"],
+    lo        = fe_season[coef, "Q2.5"],
+    hi        = fe_season[coef, "Q97.5"],
+    sig       = sign(lo) == sign(hi),
+    direction = if_else(est >= 0, "pos", "neg"),
+    abs_est   = abs(est),
+    lagged    = lag != ""
+  ) |>
+  left_join(sdag_nodes |> select(from = id, x0 = x, y0 = y), by = "from") |>
+  left_join(sdag_nodes |> select(to = id, x1 = x, y1 = y), by = "to") |>
+  mutate(lx  = x0 + pos * (x1 - x0) + loff_x,
+         ly  = y0 + pos * (y1 - y0) + loff_y,
+         lbl = paste0(sprintf("%.2f", est), if_else(lagged, paste0(" (", lag, ")"), "")))
+
+# Rd-Pmax residual correlation, drawn as a double-headed arc
+rescor_season <- posterior_summary(brms_sem_season_metab,
+                                   variable = "rescor__logrd__logpmax")
+rescor_edge <- tibble(
+  x0 = sdag_nodes$x[sdag_nodes$id == "Rd"], y0 = sdag_nodes$y[sdag_nodes$id == "Rd"],
+  x1 = sdag_nodes$x[sdag_nodes$id == "Pmax"], y1 = sdag_nodes$y[sdag_nodes$id == "Pmax"],
+  sig = sign(rescor_season[, "Q2.5"]) == sign(rescor_season[, "Q97.5"]),
+  lbl = sprintf("r = %.2f", rescor_season[, "Estimate"])
 )
 
-dag_edges <- tribble(
-  ~from,   ~to,           ~est,   ~sig,  ~loff_x, ~loff_y,
-  "Year",  "Temp",        0.464,  TRUE,   0.28,    0.18,
-  "Temp",  "Coral",      -0.559,  TRUE,   0.00,    0.24,
-  "Temp",  "Rd",          0.213,  FALSE, -0.35,    0.24,
-  "Temp",  "Pmax",       -0.152,  FALSE, -0.75,   -0.22,
-  "Coral", "Rd",          1.075,  TRUE,  -0.08,    0.24,
-  "Coral", "Algae",      -0.659,  TRUE,  -0.08,   -0.24,
-  "Coral", "Corallivore", 0.664,  TRUE,   0.38,   -0.20,
-  "Coral", "Pmax",       -0.336,  FALSE,  0.38,    0.20,
-  "Rd",    "N",           0.621,  TRUE,  -0.18,    0.22,   # short diagonal up-right
-  "Rd",    "Pmax",        0.809,  TRUE,   0.00,    0.24,   # straight horizontal below N
-  "Algae", "Herbs",       0.540,  TRUE,   0.00,    0.24    # straight horizontal
-) |>
-  mutate(direction = if_else(est >= 0, "pos", "neg"), abs_est = abs(est)) |>
-  left_join(dag_nodes |> select(id, x, y) |> rename(from = id, x0 = x, y0 = y), by = "from") |>
-  left_join(dag_nodes |> select(id, x, y) |> rename(to   = id, x1 = x, y1 = y), by = "to") |>
-  mutate(mx = (x0 + x1) / 2, my = (y0 + y1) / 2, lbl = sprintf("%.2f", est))
+# Compositional bracket to the left of the two benthic nodes
+bracket_x <- 3.05
+bracket <- tibble(
+  x    = c(bracket_x, bracket_x, bracket_x),
+  xend = c(bracket_x, bracket_x + 0.12, bracket_x + 0.12),
+  y    = c(1.8, 1.8, 3.6),
+  yend = c(3.6, 1.8, 3.6)
+)
 
-# All edges are straight — no geom_curve needed
+# Total effects (direct + indirect, from the effects chunk), shown in a box
+total_line <- function(lab, e) {
+  r <- filter(pmax_effects, effect == e)
+  sprintf("%s: %.2f [%.2f, %.2f]", lab, r$median, r$lo95, r$hi95)
+}
+total_box <- tibble(
+  x = 1.5, y = 6.15,
+  lbl = paste(
+    "Total effects (direct + indirect)",
+    total_line("Coral \u2192 Pmax", "coral_total"),
+    total_line("Fleshy algae \u2192 Pmax", "fleshy_total"),
+    total_line("N \u2192 Pmax", "N_total"),
+    total_line("Temp \u2192 Pmax", "temp_total_pmax"),
+    total_line("Temp \u2192 Rd", "temp_total_rd"),
+    sep = "\n")
+)
+
 dag_arr <- arrow(length = unit(3.0, "mm"), type = "closed")
 
-fig3 <- ggplot() +
-  # Faint region backgrounds
-  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 3.2, ymax = 5.65,
+# One layer per edge so curvature and linetype can vary by edge
+sdag_edge_layers <- function(d) {
+  lapply(split(d, seq_len(nrow(d))), \(e) {
+    mapping <- aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est)
+    args <- list(data = e, alpha = if (e$sig) 0.82 else 0.45, arrow = dag_arr,
+                 lineend = "butt", linetype = if (e$lagged) "dashed" else "solid")
+    if (e$sig) mapping$colour <- quote(direction) else args$colour <- nsig_col
+    if (e$curv != 0) {
+      do.call(geom_curve, c(list(mapping = mapping, curvature = e$curv), args))
+    } else {
+      do.call(geom_segment, c(list(mapping = mapping), args))
+    }
+  })
+}
+
+fig3_season <- ggplot() +
+  annotate("rect", xmin = 5.2, xmax = 10.4, ymin = 2.95, ymax = 6.6,
            fill = "#EDE7F6", alpha = 0.18, color = NA) +
-  annotate("rect", xmin = 4.8, xmax = 10.0, ymin = 1.2, ymax = 2.75,
+  annotate("rect", xmin = 5.2, xmax = 10.4, ymin = 0.2, ymax = 2.6,
            fill = "#E3F2FD", alpha = 0.18, color = NA) +
-  # Region labels
-  annotate("text", x = 10.12, y = 4.5, label = "Ecosystem\nfunction",
+  annotate("text", x = 10.5, y = 4.8, label = "Ecosystem\nfunction",
            hjust = 0, size = 2.6, color = "#6A1B9A", fontface = "italic", lineheight = 0.9) +
-  annotate("text", x = 10.12, y = 2.0, label = "Community\ncomposition",
+  annotate("text", x = 10.5, y = 1.4, label = "Community\ncomposition",
            hjust = 0, size = 2.6, color = "#1565C0", fontface = "italic", lineheight = 0.9) +
-  # Significant edges
-  geom_segment(data = filter(dag_edges,  sig),
-    aes(x = x0, y = y0, xend = x1, yend = y1, color = direction, linewidth = abs_est),
-    alpha = 0.82, arrow = dag_arr, lineend = "butt") +
-  # Non-significant edges — reduced alpha to de-emphasise
-  geom_segment(data = filter(dag_edges, !sig),
-    aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = abs_est),
-    color = nsig_col, alpha = 0.45, arrow = dag_arr, lineend = "butt") +
-  geom_label(data = filter(dag_edges,  sig),
-    aes(x = mx + loff_x, y = my + loff_y, label = lbl, color = direction),
-    size = 2.8, fontface = "bold", fill = "white",
+  sdag_edge_layers(sdag_edges) +
+  geom_segment(data = bracket, aes(x = x, y = y, xend = xend, yend = yend),
+               color = "#2E7D32", linewidth = 0.8) +
+  annotate("text", x = bracket_x - 0.12, y = 2.7, label = "Dirichlet composition",
+           angle = 90, size = 2.5, color = "#2E7D32", fontface = "italic") +
+  geom_curve(data = rescor_edge, aes(x = x0, y = y0, xend = x1, yend = y1),
+             curvature = -0.3, linetype = "dotted", linewidth = 0.9,
+             color = if (rescor_edge$sig) "grey25" else nsig_col,
+             arrow = arrow(length = unit(2.5, "mm"), type = "closed", ends = "both")) +
+  geom_label(data = rescor_edge, aes(x = (x0 + x1) / 2, y = y0 + 0.36, label = lbl),
+             color = if (rescor_edge$sig) "grey25" else nsig_col,
+             size = 2.5, fontface = "bold", fill = "white",
+             label.size = 0, label.padding = unit(0.07, "lines")) +
+  geom_label(data = filter(sdag_edges, sig),
+    aes(x = lx, y = ly, label = lbl, color = direction),
+    size = 2.5, fontface = "bold", fill = "white",
     label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
-  geom_label(data = filter(dag_edges, !sig),
-    aes(x = mx + loff_x, y = my + loff_y, label = lbl),
-    color = nsig_col, size = 2.8, fontface = "bold", fill = "white",
+  geom_label(data = filter(sdag_edges, !sig),
+    aes(x = lx, y = ly, label = lbl),
+    color = nsig_col, size = 2.5, fontface = "bold", fill = "white",
     label.size = 0, label.padding = unit(0.07, "lines"), show.legend = FALSE) +
-  # Node boxes
-  {lapply(seq_len(nrow(dag_nodes)), function(i) {
-    nd <- dag_nodes[i, ]
+  lapply(seq_len(nrow(sdag_nodes)), function(i) {
+    nd <- sdag_nodes[i, ]
     geom_label(data = nd, aes(x = x, y = y, label = label),
-               fill = nd$fill, color = nd$border, size = 3.0,
+               fill = nd$fill, color = nd$border, size = 2.8,
                fontface = "bold", lineheight = 0.9, label.size = 0.65,
-               label.padding = unit(0.38, "lines"), label.r = unit(4, "pt"),
+               label.padding = unit(0.35, "lines"), label.r = unit(4, "pt"),
                show.legend = FALSE)
-  })} +
+  }) +
+  geom_label(data = total_box, aes(x = x, y = y, label = lbl),
+             size = 2.3, lineheight = 0.95, color = "#4527A0", fill = "white",
+             label.size = 0.4, label.padding = unit(0.25, "lines"), label.r = unit(3, "pt")) +
   scale_color_manual(values = c("pos" = pos_col, "neg" = neg_col),
                      labels = c("pos" = "Positive", "neg" = "Negative"),
                      name = "Effect direction") +
-  scale_linewidth(range = c(0.6, 2.8), guide = "none") +
-  labs(caption = "Standardized β on arrows  ·  gray = 95% CI crosses zero") +
+  scale_linewidth(range = c(0.5, 2.6), guide = "none") +
+  labs(caption = "Standardized \u03b2 on arrows (log-ratio scale into coral and fleshy algae)  \u00b7  gray = 95% CI crosses zero  \u00b7  dashed = lagged effect  \u00b7  dotted \u2194 = residual correlation") +
   theme_void(base_size = 12) +
   theme(
-    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 9, margin = margin(t = 6)),
+    plot.caption    = element_text(hjust = 0.5, color = "grey55", size = 8.5, margin = margin(t = 6)),
     legend.position = "bottom",
     legend.title    = element_text(size = 10, face = "bold"),
     legend.text     = element_text(size = 9),
@@ -1314,1576 +2100,1043 @@ fig3 <- ggplot() +
     plot.margin     = margin(8, 10, 6, 10)
   ) +
   guides(color = guide_legend(override.aes = list(linewidth = 1.5))) +
-  coord_cartesian(xlim = c(-0.1, 11.8), ylim = c(1.35, 5.75))
+  coord_cartesian(xlim = c(-0.1, 11.4), ylim = c(0.1, 6.75))
 
 ggsave(
-  here("Output", "fig3_sem_dag.pdf"),
-  plot   = fig3,
-  width  = 9,
-  height = 4.2
+  here("Output", "fig3b_sem_season_dag.pdf"),
+  plot   = fig3_season,
+  width  = 10,
+  height = 5.6
 )
 
-fig3
+fig3_season
 ```
 
-## SEM Path Coefficients
+### Seasonal SEM path coefficients
 
-```{r sem-paths}
-#| label: fig-sem-paths
+```{r sem-season-paths}
+#| label: fig-sem-season-paths
 #| cache: false
-#| fig-cap: "**Figure 4.** SEM path coefficient effect sizes."
-#| fig-width: 16
-#| fig-height: 6
+#| fig-cap: "**Figure 4b.** Seasonal SEM path coefficient effect sizes (posterior mean and 95% CI; faded = CI crosses zero). Coral and fleshy algae panels are Dirichlet effects on log(part / other cover). Diamonds = total within-year effects: coral and fleshy algae cover on Pmax (direct + via N content) and temperature on Rd and Pmax (direct + via benthic cover). The total effects of N on Pmax and of cover on Rd equal their direct paths."
+#| fig-width: 18
+#| fig-height: 6.5
 
-# Extract and format path coefficients
-gp_edges <- as_tibble(fixef(brms_sem_full)) |>
-  mutate(coef = rownames(fixef(brms_sem_full))) |>
-  separate(col = coef, into = c("resp", "pred")) |>
-  filter(pred != "Intercept") |>
-  rename(est = Estimate, lo = `Q2.5`, hi = `Q97.5`) |>
-  mutate(sig = if_else(sign(lo) == sign(hi), 1, 0.5)) |>
-  mutate(resp = case_when(
-    resp == "temperature" ~ "Temperature",
-    resp == "logfleshy" ~ "Fleshy Macroalgae and Turf",
-    resp == "logpmax" ~ "Ecosystem Pmax",
-    resp == "logrd" ~ "Ecosystem Rd",
-    resp == "herbs" ~ "Herbivorous Fish",
-    resp == "Corallivore" ~ "Corallivore Fish",
-    resp == "logcoral" ~ "Coral",
-    resp == "Npercent" ~ "N stock"
-  )) |>
-  mutate(resp = factor(resp, c(
-    "Temperature", "Coral", "Fleshy Macroalgae and Turf", "Herbivorous Fish",
-    "Corallivore Fish", "Ecosystem Rd", "Ecosystem Pmax", "N stock"
-  ))) |>
-  mutate(pred = case_when(
-    pred == "temperature" ~ "Temperature",
-    pred == "mitemperature" ~ "Temperature",
-    pred == "milogrd" ~ "Ecosystem Rd Rate",
-    pred == "logcoral" ~ "Coral Cover",
-    pred == "logfleshy" ~ "Fleshy Macroalgae and Turf Cover",
-    pred == "Year" ~ "Year",
-    pred == "yearresid" ~ "Non-Temperature Yearly Variability"
-  )) |>
-  mutate(pred = factor(pred, c(
-    "Ecosystem Rd Rate", "Fleshy Macroalgae and Turf Cover",
-    "Coral Cover", "Non-Temperature Yearly Variability",
-    "Temperature", "Year"
-  )))
+path_resp_labels <- c(
+  temperature = "Temperature",
+  coralshare  = "Coral Cover (log ratio)",
+  fleshyshare = "Fleshy Algae (log ratio)",
+  logherbs    = "Herbivorous Fish",
+  logcoralliv = "Corallivore Fish",
+  logN        = "N Content",
+  logrd       = "Ecosystem Rd",
+  logpmax     = "Ecosystem Pmax"
+)
+path_pred_labels <- c(
+  Year                 = "Year",
+  lr_coral_lag1        = "Coral (t\u22121)",
+  lr_fleshy_lag1       = "Fleshy Algae (t\u22121)",
+  temperature          = "Max Temperature",
+  temperature_total    = "Max Temperature (total, incl. via cover)",
+  Disturbance          = "Disturbance (0/1)",
+  logherbs_lag1        = "Herbivorous Fish (t\u22121)",
+  logcoralliv_lag1     = "Corallivore Fish (t\u22121)",
+  milogrec3idxEQobs_id = "Lagoon Recruitment (t\u22123)",
+  logcoral_z           = "Coral Cover",
+  coral_total          = "Coral Cover (total, incl. via N)",
+  logfleshy_z          = "Fleshy Algae Cover",
+  fleshy_total         = "Fleshy Algae Cover (total, incl. via N)",
+  summer               = "Season (Summer \u2212 Winter)",
+  logN                 = "N Content"
+)
 
-gp_edges |>
+# Dirichlet coefficient names (mucoral_comp_x) are recoded so that the
+# response and predictor split on the first "_"
+gp_edges_season <- as_tibble(season_fixef(), rownames = "coef") |>
+  mutate(coef = sub("^mucoral_comp_", "coralshare_", coef),
+         coef = sub("^mufleshy_comp_", "fleshyshare_", coef)) |>
+  separate(coef, into = c("resp", "pred"), sep = "_", extra = "merge") |>
+  filter(pred != "Intercept", resp %in% names(path_resp_labels)) |>
+  transmute(resp, pred, est = Estimate, lo = `Q2.5`, hi = `Q97.5`,
+            effect_type = "Direct path") |>
+  # Total effects from the effects chunk
+  bind_rows(
+    pmax_effects |>
+      filter(effect %in% c("coral_total", "fleshy_total", "temp_total_pmax", "temp_total_rd")) |>
+      transmute(
+        resp = if_else(effect == "temp_total_rd", "logrd", "logpmax"),
+        pred = recode(effect, coral_total = "coral_total", fleshy_total = "fleshy_total",
+                      temp_total_pmax = "temperature_total", temp_total_rd = "temperature_total"),
+        est = median, lo = lo95, hi = hi95, effect_type = "Total effect"
+      )
+  ) |>
+  mutate(
+    sig  = if_else(sign(lo) == sign(hi), 1, 0.5),
+    resp = factor(path_resp_labels[resp], path_resp_labels),
+    pred = factor(path_pred_labels[pred], rev(path_pred_labels))
+  )
+stopifnot(!anyNA(gp_edges_season$resp), !anyNA(gp_edges_season$pred))
+
+gp_edges_season |>
   ggplot(aes(x = est, y = pred)) +
-  geom_point(size = 3, color = "firebrick", aes(alpha = sig)) +
-  geom_errorbarh(aes(xmin = lo, xmax = hi, alpha = sig), height = 0, color = "firebrick") +
+  geom_point(aes(alpha = sig, shape = effect_type), size = 3, color = "firebrick") +
+  geom_errorbar(aes(xmin = lo, xmax = hi, alpha = sig), width = 0,
+                orientation = "y", color = "firebrick") +
   geom_vline(xintercept = 0) +
-  scale_alpha(range = c(0.4, 1)) +
+  scale_alpha(range = c(0.4, 1), guide = "none") +
+  scale_shape_manual(values = c("Direct path" = 16, "Total effect" = 18), name = NULL) +
+  scale_x_continuous(breaks = c(-1, 0, 1)) +
   labs(
     x = "Standardized Effect Size",
     y = "Predictor Variables"
   ) +
   theme_minimal() +
-  facet_wrap(~resp, nrow = 1) +
+  facet_wrap(~resp, nrow = 1, labeller = label_wrap_gen(width = 14)) +
   theme(
     text = element_text(size = 14),
     axis.text = element_text(size = 14),
-    strip.text = element_text(size = 14),
-    legend.position = "none"
+    strip.text = element_text(size = 13),
+    strip.clip = "off",
+    legend.position = "bottom"
   )
 
-ggsave(here("Output", "fig4_sem_paths.pdf"), width = 16, height = 6)
+ggsave(here("Output", "fig4b_sem_season_paths.pdf"), width = 18, height = 6.5)
 ```
 
-## Temperature Effects: Direct vs Indirect
+### Sensitivity: Rd sub-model with fish biomass
 
-```{r temp-effects-data}
-#| label: temp-effects-data
-#| echo: false
-#| message: false
-#| warning: false
-#| cache: false
+This refits the metabolism block with log total fish biomass added to the Rd equation. The annual block is unaffected. Because Rd and Pmax residuals are correlated, the comparison uses the joint Rd–Pmax likelihood.
 
-# ── Compute direct and indirect temperature effects from SEM posteriors ────────
-# post_samples: 15,000 post-warmup draws from the full SEM
-post_samples <- as_tibble(as.matrix(brms_sem_full))
+```{r sem-season-fish-diagnostics}
+#| label: sem-season-fish-diagnostics
 
-# Individual path coefficient draws
-b_tc  <- post_samples$b_logcoral_temperature       # Temp → Coral (direct)
-b_cr  <- post_samples$b_logrd_logcoral             # Coral → Rd
-b_cf  <- post_samples$b_logfleshy_logcoral         # Coral → Fleshy
-b_cc  <- post_samples$b_Corallivore_logcoral       # Coral → Corallivore Fish
-b_cp  <- post_samples$b_logpmax_logcoral           # Coral → Pmax
-b_fh  <- post_samples$b_herbs_logfleshy            # Fleshy → Herbivore Fish
-b_rn  <- post_samples$bsp_Npercent_milogrd         # Rd → N Content
-b_tr  <- post_samples$bsp_logrd_mitemperature      # Temp → Rd (direct)
-b_tp  <- post_samples$bsp_logpmax_mitemperature    # Temp → Pmax (direct)
+# Evidence cited inline in the justification text below: collinearity of
+# fish with coral cover, and the fish share of measured Rd
 
-n_draws <- nrow(post_samples)
-zeros   <- rep(0, n_draws)
+rd_rows <- semdata_season |> filter(sub_rd)
 
-# Direct, indirect, and total effects for each response variable
-effect_specs <- list(
-  `Coral Cover`       = list(direct = b_tc,   indirect = zeros),
-  `Ecosystem Respiration`      = list(direct = b_tr,   indirect = b_tc * b_cr),
-  `Fleshy & Turf Macroalgae` = list(direct = zeros,  indirect = b_tc * b_cf),
-  `Corallivorous Fish`  = list(direct = zeros,  indirect = b_tc * b_cc),
-  `Ecosystem Pmax`    = list(direct = b_tp,   indirect = b_tc * b_cp),
-  `Herbivorous Fish`    = list(direct = zeros,  indirect = b_tc * b_cf * b_fh),
-  `N Content`         = list(direct = zeros,  indirect = b_tc * b_cr * b_rn)
-)
+fish_rd_cor <- cor(rd_rows$logcoral_z, rd_rows$logfish)
+n_rd_years  <- n_distinct(rd_rows$year_f)
 
-summarise_effect <- function(samps) {
-  tibble(
-    samples     = list(samps),
-    median      = median(samps),
-    lower       = quantile(samps, 0.025),
-    upper       = quantile(samps, 0.975),
-    significant = sign(quantile(samps, 0.025)) == sign(quantile(samps, 0.975))
-  )
-}
-
-all_effects <- imap_dfr(effect_specs, function(spec, resp_name) {
-  bind_rows(
-    summarise_effect(spec$direct)               |> mutate(response = resp_name, effect_type = "Direct"),
-    summarise_effect(spec$indirect)             |> mutate(response = resp_name, effect_type = "Indirect"),
-    summarise_effect(spec$direct + spec$indirect) |> mutate(response = resp_name, effect_type = "Total")
-  )
-}) |>
-  mutate(
-    response    = factor(response,    levels = names(effect_specs)),
-    effect_type = factor(effect_type, levels = c("Direct", "Indirect", "Total"))
-  )
-```
-
-```{r temp-indirect-ranking}
-#| label: fig-temp-indirect
-#| cache: false
-#| fig-cap: "**Figure 5.** Indirect effects of temperature mediated through coral cover."
-#| fig-width: 8
-#| fig-height: 6
-
-# Extract only indirect effects and rank them
-indirect_effects <- all_effects |>
-  filter(effect_type == "Indirect") |>
-  # Remove coral (no indirect effect)
-  filter(response != "Coral Cover") |>
-  arrange(median) |>
-  mutate(
-    response = fct_reorder(response, median),
-    direction = if_else(median < 0, "Negative", "Positive")
-  ) 
-indirect_effects |>
-  ggplot(aes(y = response, x = median, fill = direction, alpha = significant)) +
-  geom_vline(xintercept = 0, linetype = "solid", color = "gray30", linewidth = 0.5) +
-  geom_col(width = 0.7) +
-  geom_errorbarh(
-    aes(xmin = lower, xmax = upper),
-    height = 0.1,
-    linewidth = 0.8,
-    color = "gray20",
-    alpha = 0.6
-  ) +
-  scale_fill_manual(
-    values = c("Negative" = "#E64B35", "Positive" = "#4DBBD5"),
-    name = "Effect Direction"
-  ) +
-  scale_alpha_manual(
-    values = c("TRUE" = 0.9, "FALSE" = 0.2),
-    guide = "none"
-  ) +
-  labs(
-    x = "Standardized Indirect Effect Size",
-    y = ""
-  ) +
-  theme_minimal(base_size = 18) +
-  theme(
-    axis.text.y = element_text(size = 16, hjust = 1),
-    axis.text.x = element_text(size = 15),
-    axis.title.x = element_text(size = 17, margin = margin(t = 10)),
-    legend.position = "none",
-    legend.title = element_text(size = 16),
-    legend.text = element_text(size = 15),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
+fish_rd_pct <- YearSeason_Averages |>
+  filter(!is.na(Rd)) |>
+  summarise(
+    min_pct    = min(100 * Rfish_field_mmolO2_m2_h / Rd),
+    median_pct = median(100 * Rfish_field_mmolO2_m2_h / Rd),
+    max_pct    = max(100 * Rfish_field_mmolO2_m2_h / Rd)
   )
 
-ggsave(here("Output", "fig5_temp_indirect.pdf"), width = 8, height = 6)
-
-# Print a ranked summary table of the indirect effects for quick inspection
-indirect_effects |>
-  select(response, median, lower, upper, significant) |>
-  mutate(across(median:upper, ~round(.x, 3))) |>
-  arrange(median)
+fish_rd_cor
+fish_rd_pct
 ```
 
-## SEM Conditional Effects
-
-```{r sem-conditional}
-#| label: fig-sem-conditional
-#| cache: false
-#| fig-cap: "**Figure 6.** Conditional effects from the Bayesian SEM."
-#| fig-width: 7.2
-#| fig-height: 9.72
-
-# Unscaling parameters
-yearresid_full <- resid(lm(Year ~ Max_temp, data = Year_Averages, na.action = na.exclude))
-
-Yearmodelvalues <- Year_Averages |>
-  mutate(
-    log_coral = log(mean_coral),
-    logfleshy = log(mean_fleshy),
-    logrd     = log(Rd),
-    logpmax   = log(Pmax),
-    N_percent = log(N_percent),
-    yearresid = yearresid_full
-  ) |>
-  select(
-    Year, meancoral = mean_coral, meanfleshy = mean_fleshy,
-    temperature = Max_temp,
-    Npercent = N_percent,
-    logrd, logpmax, logcoral = log_coral,
-    logfleshy, Corallivore, herbs = Herbivores, yearresid
-  ) |>
-  drop_na(logcoral)
-
-modelmean <- Yearmodelvalues |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
-modelsd   <- Yearmodelvalues |> summarise(across(everything(), \(x) sd(x,   na.rm = TRUE)))
-
-# ── Shared theme: 10 pt, exported at 183 × 247 mm ──────────────────────────
-base_sz <- 10
-rib_a   <- 0.25
-rib_cl  <- "#67bed9"
-ln_sz   <- 0.8
-pt_sz   <- 1.8
-
-theme_cond <- theme_classic(base_size = base_sz) +
-  theme(
-    plot.title   = element_text(size = base_sz, face = "bold"),
-    axis.title   = element_text(size = base_sz),
-    axis.text    = element_text(size = base_sz, color = "black"),
-    axis.line    = element_line(linewidth = 0.4),
-    axis.ticks   = element_line(linewidth = 0.4)
-  )
-
-# ── Row 1: Climate drivers ─────────────────────────────────────────────────
-
-temp_year <- conditional_effects(brms_sem_full, resp = "temperature", effects = "Year")
-ty_plot <- as_tibble(temp_year$temperature.temperature_Year) |>
-  mutate(
-    Year       = Year       * modelsd$Year        + modelmean$Year,
-    estimate__ = estimate__ * modelsd$temperature + modelmean$temperature,
-    lower__    = lower__    * modelsd$temperature + modelmean$temperature,
-    upper__    = upper__    * modelsd$temperature + modelmean$temperature
-  ) |>
-  ggplot(aes(x = Year, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = Year, y = Max_temp), size = pt_sz, alpha = 0.55) +
-  labs(x = "Year", y = "Temperature\n(\u00b0C)", title = "B  Year \u2192 Temperature") +
-  theme_cond
-
-coral_temp <- conditional_effects(brms_sem_full, resp = "logcoral", effects = "temperature")
-ct_plot <- as_tibble(coral_temp$logcoral.logcoral_temperature) |>
-  mutate(
-    temperature = temperature * modelsd$temperature + modelmean$temperature,
-    estimate__  = exp(estimate__ * modelsd$logcoral + modelmean$logcoral),
-    lower__     = exp(lower__    * modelsd$logcoral + modelmean$logcoral),
-    upper__     = exp(upper__    * modelsd$logcoral + modelmean$logcoral)
-  ) |>
-  ggplot(aes(x = temperature, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = Max_temp, y = exp(log_coral)), size = pt_sz, alpha = 0.55) +
-  coord_transform(y = "log") +
-  scale_y_continuous(breaks = c(1, 5, 10, 20, 40)) +
-  labs(x = "Temperature\n(\u00b0C)", y = "Coral Cover\n(%)",
-       title = "C  Temperature \u2192 Coral Cover") +
-  theme_cond
-
-# ── Row 2: Coral → benthos ─────────────────────────────────────────────────
-
-fleshy_coral <- conditional_effects(brms_sem_full, resp = "logfleshy", effects = "logcoral")
-fc_plot <- as_tibble(fleshy_coral$logfleshy.logfleshy_logcoral) |>
-  mutate(
-    logcoral   = exp(logcoral   * modelsd$logcoral  + modelmean$logcoral),
-    estimate__ = exp(estimate__ * modelsd$logfleshy + modelmean$logfleshy),
-    lower__    = exp(lower__    * modelsd$logfleshy + modelmean$logfleshy),
-    upper__    = exp(upper__    * modelsd$logfleshy + modelmean$logfleshy)
-  ) |>
-  ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = mean_fleshy), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log", y = "log") +
-  labs(x = "Coral Cover\n(%)", y = "Fleshy Macroalgae and Turf \n(%)",
-       title = "D  Coral Cover \u2192 Fleshy Algae") +
-  theme_cond
-
-rd_coral <- conditional_effects(brms_sem_full, resp = "logrd", effects = "logcoral")
-rc_plot <- as_tibble(rd_coral$logrd.logrd_logcoral) |>
-  mutate(
-    logcoral   = exp(logcoral   * modelsd$logcoral + modelmean$logcoral),
-    estimate__ = exp(estimate__ * modelsd$logrd    + modelmean$logrd),
-    lower__    = exp(lower__    * modelsd$logrd    + modelmean$logrd),
-    upper__    = exp(upper__    * modelsd$logrd    + modelmean$logrd)
-  ) |>
-  ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Rd), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log", y = "log") +
-  labs(
-    x = "Coral Cover\n(%)",
-    y = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    title = "E  Coral Cover \u2192 Respiration"
-  ) +
-  theme_cond
-
-# ── Row 3: Coral → fish ────────────────────────────────────────────────────
-
-corallivore_coral <- conditional_effects(brms_sem_full, resp = "Corallivore", effects = "logcoral")
-cc_plot <- as_tibble(corallivore_coral$Corallivore.Corallivore_logcoral) |>
-  mutate(
-    logcoral   = exp(logcoral   * modelsd$logcoral    + modelmean$logcoral),
-    estimate__ = estimate__     * modelsd$Corallivore + modelmean$Corallivore,
-    lower__    = lower__        * modelsd$Corallivore + modelmean$Corallivore,
-    upper__    = upper__        * modelsd$Corallivore + modelmean$Corallivore
-  ) |>
-  ggplot(aes(x = logcoral, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = exp(log_coral), y = Corallivore), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log") +
-  labs(
-    x = "Coral Cover\n(%)",
-    y = expression(atop("Corallivore Biomass", "(g m"^-2*")")),
-    title = "F  Coral Cover \u2192 Corallivore Fish"
-  ) +
-  theme_cond
-
-herbs_fleshy <- conditional_effects(brms_sem_full, resp = "herbs", effects = "logfleshy")
-hf_plot <- as_tibble(herbs_fleshy$herbs.herbs_logfleshy) |>
-  mutate(
-    logfleshy  = exp(logfleshy  * modelsd$logfleshy + modelmean$logfleshy),
-    estimate__ = estimate__     * modelsd$herbs     + modelmean$herbs,
-    lower__    = lower__        * modelsd$herbs     + modelmean$herbs,
-    upper__    = upper__        * modelsd$herbs     + modelmean$herbs
-  ) |>
-  ggplot(aes(x = logfleshy, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = mean_fleshy, y = Herbivores), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log") +
-  labs(
-    x = "Fleshy Macroalgae and Turf \n(%)",
-    y = expression(atop("Herbivore Biomass", "(g m"^-2*")")),
-    title = "G  Fleshy Algae \u2192 Herbivore Fish"
-  ) +
-  theme_cond
-
-# ── Row 4: Metabolism → ecosystem function ─────────────────────────────────
-
-N_Rd <- conditional_effects(brms_sem_full, resp = "Npercent", effects = "logrd")
-nr_plot <- as_tibble(N_Rd$Npercent.Npercent_logrd) |>
-  mutate(
-    logrd      = exp(logrd      * modelsd$logrd    + modelmean$logrd),
-    estimate__ = exp(estimate__ * modelsd$Npercent + modelmean$Npercent),
-    lower__    = exp(lower__    * modelsd$Npercent + modelmean$Npercent),
-    upper__    = exp(upper__    * modelsd$Npercent + modelmean$Npercent)
-  ) |>
-  ggplot(aes(x = logrd, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = Rd, y = N_percent), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log", y = "log") +
-  labs(
-    x = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    y = "Nitrogen Content\n(%)",
-    title = "H  Respiration \u2192 Algal N Content"
-  ) +
-  theme_cond
-
-rd_pmax <- conditional_effects(brms_sem_full, resp = "logpmax", effects = "logrd")
-rp_plot <- as_tibble(rd_pmax$logpmax.logpmax_logrd) |>
-  mutate(
-    logrd      = exp(logrd      * modelsd$logrd   + modelmean$logrd),
-    estimate__ = exp(estimate__ * modelsd$logpmax + modelmean$logpmax),
-    lower__    = exp(lower__    * modelsd$logpmax + modelmean$logpmax),
-    upper__    = exp(upper__    * modelsd$logpmax + modelmean$logpmax)
-  ) |>
-  ggplot(aes(x = logrd, y = estimate__)) +
-  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = rib_a, fill = rib_cl) +
-  geom_line(linewidth = ln_sz) +
-  geom_point(data = Year_Averages, aes(x = Rd, y = Pmax), size = pt_sz, alpha = 0.55) +
-  coord_transform(x = "log", y = "log") +
-  labs(
-    x = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    y = expression(atop("Ecosystem P"[max], "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-    title = expression(bold("I  Respiration \u2192 Ecosystem P"[max]))
-  ) +
-  theme_cond
-
-# ── Assemble 4 × 2 grid and export at 183 × 247 mm ─────────────────────────
-fig_cond <- (ty_plot | ct_plot) /
-            (fc_plot | rc_plot) /
-            (cc_plot | hf_plot) /
-            (nr_plot | rp_plot)
-
-ggsave(
-  here("Output", "fig6_sem_conditional.pdf"),
-  plot   = fig_cond,
-  width  = 183,
-  height = 247,
-  units  = "mm",
-  device = cairo_pdf
-)
-
-fig_cond
-```
-
-## Ecosystem Projections
-
-```{r cover-ceilings}
-
-# These are the upper truncation values on the z-log scale that correspond to
-# 100% benthic cover. They were calculated from the observed data and hardcoded
-# here so that projection code uses exactly the same ceiling as the SEM.
-# Both values were verified to back-transform to exactly 100% cover.
-z_ceil_coral  <- 3.39   # (log(100) - mean(log(coral%))) / sd(log(coral%))
-z_ceil_fleshy <- 2.26   # (log(100) - mean(log(fleshy%))) / sd(log(fleshy%))
-```
-
-```{r full-sem-proj-data}
-
-#| label: full-sem-proj-data
-#| echo: false
-#| message: false
-#| warning: false
-# Compute full-SEM projection matrices — needed by the reduced SEM comparison plot.
-
-# ── Projection years (standardised to SEM scale) ─────────────────────────────
-proj_years <- 2005:2055
-year_std   <- (proj_years - modelmean$Year) / modelsd$Year
-
-# 3 000 thinned posterior draws
-set.seed(7341)
-post <- as_draws_df(brms_sem_full) |>
-  as_tibble() |>
-  slice_sample(n = 3000)
-
-n <- nrow(post)
-p <- length(proj_years)
-
-# Helper: multiply each row of an (n × p) matrix by a length-n coefficient vector
-rs <- function(coef, mat) sweep(mat, 1, coef, "*")
-yr_mat <- matrix(rep(year_std, each = n), nrow = n)  # n × p
-
-# ── Propagate causal chain through the full SEM ───────────────────────────────
-# 1. Temperature (z-scored)
-temp_mat <- rs(post$b_temperature_Year, yr_mat) + post$b_temperature_Intercept
-
-# ── yearresid matrix: observed z-scaled values for hindcast (2005–2025),
-#    0 (standardised mean) for forecast years (2026–2055). yearresid captures
-#    year-specific temperature anomalies beyond the linear trend; setting it to 0
-#    for forecast years assumes future deviations are unknown and average out.
-obs_yr_actual   <- round(semdata2$Year * modelsd$Year + modelmean$Year)
-yr_resid_lookup <- tibble(Year = obs_yr_actual, yr = semdata2$yearresid)
-yr_resid_vec    <- sapply(proj_years, function(y) {
-  row <- yr_resid_lookup |> filter(Year == y)
-  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
-})
-yr_resid_mat <- matrix(rep(yr_resid_vec, each = n), nrow = n)
-
-# 2. Coral cover (log-standardised; temperature + yearresid predictors)
-coral_mat <- rs(post$b_logcoral_temperature, temp_mat)    +
-             rs(post$b_logcoral_yearresid,   yr_resid_mat) +
-             post$b_logcoral_Intercept
-
-# 3. Ecosystem respiration (coral + direct temp via bsp for mi() imputed predictor)
-rd_mat <- rs(post$b_logrd_logcoral,          coral_mat) +
-          rs(post$bsp_logrd_mitemperature,   temp_mat)  +
-          post$b_logrd_Intercept
-
-# 4. Fleshy macroalgae (log-standardised; coral predictor)
-fleshy_mat <- pmin(rs(post$b_logfleshy_logcoral, coral_mat) + post$b_logfleshy_Intercept,
-                   z_ceil_fleshy)
-
-# 5. Corallivore fish (z-scored; coral predictor)
-cov_mat <- rs(post$b_Corallivore_logcoral, coral_mat) + post$b_Corallivore_Intercept
-
-# 6. Herbivore fish (z-scored; fleshy algae predictor)
-herb_mat <- rs(post$b_herbs_logfleshy, fleshy_mat) + post$b_herbs_Intercept
-
-# 7. Ecosystem Pmax (log-standardised; rd + coral + temp, all via bsp/b)
-pmax_mat <- rs(post$bsp_logpmax_milogrd,      rd_mat)    +
-            rs(post$b_logpmax_logcoral,        coral_mat) +
-            rs(post$bsp_logpmax_mitemperature, temp_mat)  +
-            post$b_logpmax_Intercept
-
-# 8. Algal N content (log-standardised; rd via bsp imputed)
-n_mat <- rs(post$bsp_Npercent_milogrd, rd_mat) + post$b_Npercent_Intercept
-
-# ── Back-transform to original units ─────────────────────────────────────────
-bt_log <- function(mat, mu, sig) exp(mat * sig + mu)
-bt_lin <- function(mat, mu, sig) mat * sig + mu
-
-proj_list <- list(
-  Temperature    = bt_lin(temp_mat,   modelmean$temperature, modelsd$temperature),
-  `Coral Cover`  = bt_log(coral_mat,  modelmean$logcoral,    modelsd$logcoral),
-  Respiration    = bt_log(rd_mat,     modelmean$logrd,       modelsd$logrd),
-  `Fleshy Algae` = bt_log(fleshy_mat, modelmean$logfleshy,   modelsd$logfleshy),
-  Pmax           = bt_log(pmax_mat,   modelmean$logpmax,     modelsd$logpmax),
-  # N_percent is log-transformed in semdata2; use explicit log-scale params
-  `N Content`    = bt_log(n_mat,
-                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
-                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
-)
-
-# Derive P:R ratio directly from back-transformed Pmax and Rd matrices
-proj_list[["P:R Ratio"]] <- proj_list$Pmax / proj_list$Respiration
-
-# ── Summarise: posterior median + 50% + 95% CI per variable per year ─────────
-proj_tbl <- imap_dfr(proj_list, function(mat, vname) {
-  tibble(variable = vname,
-         Year     = rep(proj_years, each = n),
-         value    = as.vector(mat)) |>
-    group_by(variable, Year) |>
-    summarise(median = median(value, na.rm = TRUE),
-              lo95   = quantile(value, 0.025, na.rm = TRUE), hi95 = quantile(value, 0.975, na.rm = TRUE),
-              lo50   = quantile(value, 0.25,  na.rm = TRUE), hi50 = quantile(value, 0.75,  na.rm = TRUE),
-              .groups = "drop")
-})
-
-# ── Observed data for overlay ─────────────────────────────────────────────────
-obs_proj <- Year_Averages |>
-  transmute(Year,
-            Temperature    = Max_temp,
-            `Coral Cover`  = mean_coral,
-            Respiration    = Rd,
-            `Fleshy Algae` = mean_fleshy,
-            Pmax           = Pmax,
-            `N Content`    = N_percent,
-            `P:R Ratio`    = Pmax / Rd) |>
-  pivot_longer(-Year, names_to = "variable", values_to = "observed")
-```
-
-## Reduced SEM: Parsimonious Model
-
-Three of the twelve pathways in the full SEM had 95% credible intervals spanning zero — direct temperature effects on respiration, direct temperature effects on Pmax , and a direct coral effect on Pmax — indicating that these pathways are not reliably supported by the data. Retaining them in projection creates two problems: the positive temperature→Rd coefficient generates a spurious upward push on Rd when temperature is extrapolated beyond the fitted range, and the large uncertainty on the coral→Pmax and temperature→Pmax terms inflates Pmax credible intervals. A reduced 9-pathway SEM was therefore fitted with these three terms removed.
-
-```{r sem-reduced-fit}
-#| label: sem-reduced-model
+```{r sem-season-fish}
+#| label: sem-season-model-fish
 #| cache: true
-#| dependson: ["sem-preparation", "integrate-datasets", "bayesian-pi-curve", "process-pp", "process-benthic", "process-nutrients", "process-temperature", "process-fish"]
+#| dependson: ["sem-season-preparation", "sem-season-metab-model"]
 
-# Reduced SEM: remove 3 non-significant pathways
-bf_temp_r        <- bf(temperature | mi()             ~ 1 + Year)
-bf_coraltemp_r   <- bf(logcoral    | trunc(ub = 3.39) ~ 1 + temperature + yearresid +
-                         ar(time = Year, p = 1))
-bf_logrd_r       <- bf(logrd       | mi()             ~ 1 + logcoral)
-bf_logpmax_r     <- bf(logpmax     | mi()             ~ 1 + mi(logrd))
-bf_fleshy_r      <- bf(logfleshy   | trunc(ub = 2.26) ~ logcoral)
-bf_herbs_r       <- bf(herbs       | mi()             ~ 1 + logfleshy)
-bf_corallivore_r <- bf(Corallivore | mi()             ~ 1 + logcoral)
-bf_nutrients_r   <- bf(Npercent    | mi()             ~ 1 + mi(logrd))
+bf_logrd_s_fish <- bf(logrd ~ 1 + logcoral_z + logfleshy_z + temperature + summer +
+                        logfish + (1 | p | year_f), family = gaussian())
 
-brms_sem_reduced <- brm(
-  bf_temp_r + bf_coraltemp_r + bf_logrd_r + bf_herbs_r + bf_corallivore_r +
-    bf_nutrients_r + bf_fleshy_r + bf_logpmax_r + set_rescor(FALSE),
-  data    = semdata2,
-  chains  = 3, iter = 10000, warmup = 5000, seed = 11,
+brms_sem_season_metab_fish <- brm(
+  bf_logrd_s_fish + bf_logpmax_s + set_rescor(TRUE),
+  data = semdata_metab,
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 6081,
   sample_prior = "no",
-  prior   = c(
-    # b-class priors per response (logpmax and Npercent excluded: only mi() predictors
-    # → class bsp, not b)
-    set_prior("normal(0, 2)", class = "b", resp = "temperature"),
-    set_prior("normal(0, 2)", class = "b", resp = "logcoral"),
-    set_prior("normal(0, 2)", class = "b", resp = "logrd"),
-    set_prior("normal(0, 2)", class = "b", resp = "herbs"),
-    set_prior("normal(0, 2)", class = "b", resp = "Corallivore"),
-    set_prior("normal(0, 2)", class = "b", resp = "logfleshy"),
-    # Intercept priors for all responses
-    set_prior("normal(0, 2)", class = "Intercept", resp = "temperature"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logcoral"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logrd"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logpmax"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "herbs"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "Corallivore"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "logfleshy"),
-    set_prior("normal(0, 2)", class = "Intercept", resp = "Npercent"),
-    # Response-specific essential priors
-    set_prior("normal(0, 0.25)", resp = "temperature", class = "sigma", lb = 0),
-    set_prior("normal(0, 0.5)",  class = "ar",  resp = "logcoral")
-  ),
+  prior = metab_priors,
   control = list(adapt_delta = 0.99, max_treedepth = 15),
-  family  = gaussian(),
-  silent = 2, refresh = 0
+  silent = 2,
+  refresh = 0
 )
 ```
 
-```{r sem-reduced-summary}
-#| label: sem-reduced-results
+```{r sem-season-fish-compare}
+#| label: sem-season-fish-comparison
 
-summary(brms_sem_reduced)
-```
+# Joint Rd-Pmax likelihood of the metabolism block; the annual block is
+# identical across models
+loo_metab_main <- loo_block(brms_sem_season_metab)
+loo_metab_fish <- loo_block(brms_sem_season_metab_fish)
+fish_loo_cmp <- loo::loo_compare(list(main_no_fish = loo_metab_main,
+                                      with_fish    = loo_metab_fish))
+fish_loo_cmp
 
-```{r sem-reduced-r2}
-#| label: sem-reduced-r2
-
-# Manual R² for mi()-imputed responses
-for (resp in c("logrd", "logpmax")) {
-  fit_f <- fitted(brms_sem_full,    resp = resp)[, "Estimate"]
-  fit_r <- fitted(brms_sem_reduced, resp = resp)[, "Estimate"]
-  obs_v <- semdata2[[resp]]
-  ok    <- !is.na(obs_v)
-  cat(sprintf("%-10s  Full R²: %.3f   Reduced R²: %.3f\n", resp,
-              cor(fit_f[ok], obs_v[ok])^2, cor(fit_r[ok], obs_v[ok])^2))
-}
-```
-
-```{r sem-reduced-projections}
-#| label: reduced-sem-projection-data
-
-set.seed(6214)
-post_r <- as_draws_df(brms_sem_reduced) |> as_tibble() |> slice_sample(n = 3000)
-n_r    <- nrow(post_r)
-
-# yearresid matrix: observed for 2005-2025, zero for 2026-2055
-yr_resid_vec_r <- sapply(proj_years, function(y) {
-  row <- yr_resid_lookup |> filter(Year == y)
-  if (nrow(row) == 1 && !is.na(row$yr)) row$yr else 0
-})
-yr_resid_mat_r <- matrix(rep(yr_resid_vec_r, each = n_r), nrow = n_r)
-yr_mat_r       <- matrix(rep(year_std, each = n_r), nrow = n_r)
-
-# ── Propagate reduced SEM causal chain ────────────────────────────────────────
-temp_mat_r   <- rs(post_r$b_temperature_Year,     yr_mat_r)   + post_r$b_temperature_Intercept
-coral_mat_r  <- rs(post_r$b_logcoral_temperature, temp_mat_r) +
-                rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r) +
-                post_r$b_logcoral_Intercept
-rd_mat_r     <- rs(post_r$b_logrd_logcoral, coral_mat_r)      + post_r$b_logrd_Intercept
-fleshy_mat_r <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r) + post_r$b_logfleshy_Intercept,
-                     z_ceil_fleshy)
-cov_mat_r    <- rs(post_r$b_Corallivore_logcoral, coral_mat_r)+ post_r$b_Corallivore_Intercept
-herb_mat_r   <- rs(post_r$b_herbs_logfleshy, fleshy_mat_r)    + post_r$b_herbs_Intercept
-pmax_mat_r   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r)      + post_r$b_logpmax_Intercept
-n_mat_r      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r)     + post_r$b_Npercent_Intercept
-
-proj_list_r <- list(
-  Temperature    = bt_lin(temp_mat_r,   modelmean$temperature, modelsd$temperature),
-  `Coral Cover`  = bt_log(coral_mat_r,  modelmean$logcoral,    modelsd$logcoral),
-  Respiration    = bt_log(rd_mat_r,     modelmean$logrd,       modelsd$logrd),
-  `Fleshy Algae` = bt_log(fleshy_mat_r, modelmean$logfleshy,   modelsd$logfleshy),
-  Pmax           = bt_log(pmax_mat_r,   modelmean$logpmax,     modelsd$logpmax),
-  `N Content`    = bt_log(n_mat_r,
-                          mean(log(Year_Averages$N_percent), na.rm = TRUE),
-                          sd(log(Year_Averages$N_percent),   na.rm = TRUE))
-)
-proj_list_r[["P:R Ratio"]] <- proj_list_r$Pmax / proj_list_r$Respiration
-
-proj_tbl_r <- imap_dfr(proj_list_r, function(mat, vname) {
-  tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
-    group_by(variable, Year) |>
-    summarise(median = median(value, na.rm = TRUE),
-              lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
-              lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
-              .groups = "drop")
-})
-
-# ── Counterfactual: temperature stabilised at 2025 ────────────────────────────
-# temp_2025_std: z-standardised 2025 annual maximum temperature
-# = (observed 2025 max temp - SEM temperature mean) / SEM temperature SD
-# Use last non-NA Max_temp as the counterfactual (2025 is NA)
-temp_2025_val <- Year_Averages |>
-  filter(!is.na(Max_temp)) |>
-  slice_max(Year, n = 1) |>
-  pull(Max_temp)
-temp_2025_std <- (temp_2025_val - modelmean$temperature) / modelsd$temperature
-temp_mat_r_cf <- temp_mat_r
-temp_mat_r_cf[, which(proj_years > 2025)] <- temp_2025_std
-
-coral_mat_r_cf  <- rs(post_r$b_logcoral_temperature, temp_mat_r_cf)   +
-                   rs(post_r$b_logcoral_yearresid,   yr_resid_mat_r)  +
-                   post_r$b_logcoral_Intercept
-rd_mat_r_cf     <- rs(post_r$b_logrd_logcoral, coral_mat_r_cf)        + post_r$b_logrd_Intercept
-fleshy_mat_r_cf <- pmin(rs(post_r$b_logfleshy_logcoral, coral_mat_r_cf) + post_r$b_logfleshy_Intercept,
-                        z_ceil_fleshy)
-pmax_mat_r_cf   <- rs(post_r$bsp_logpmax_milogrd, rd_mat_r_cf)        + post_r$b_logpmax_Intercept
-n_mat_r_cf      <- rs(post_r$bsp_Npercent_milogrd, rd_mat_r_cf)       + post_r$b_Npercent_Intercept
-
-proj_tbl_r_cf <- imap_dfr(
-  list(Temperature    = bt_lin(temp_mat_r_cf,   modelmean$temperature, modelsd$temperature),
-       `Coral Cover`  = bt_log(coral_mat_r_cf,  modelmean$logcoral,    modelsd$logcoral),
-       Respiration    = bt_log(rd_mat_r_cf,     modelmean$logrd,       modelsd$logrd),
-       `Fleshy Algae` = bt_log(fleshy_mat_r_cf, modelmean$logfleshy,   modelsd$logfleshy),
-       Pmax           = bt_log(pmax_mat_r_cf,   modelmean$logpmax,     modelsd$logpmax),
-       `N Content`    = bt_log(n_mat_r_cf,
-                               mean(log(Year_Averages$N_percent), na.rm = TRUE),
-                               sd(log(Year_Averages$N_percent),   na.rm = TRUE))),
-  function(mat, vname) {
-    tibble(variable = vname, Year = rep(proj_years, each = n_r), value = as.vector(mat)) |>
-      group_by(variable, Year) |>
-      summarise(median = median(value, na.rm = TRUE),
-                lo95 = quantile(value, .025, na.rm = TRUE), hi95 = quantile(value, .975, na.rm = TRUE),
-                lo50 = quantile(value, .25,  na.rm = TRUE), hi50 = quantile(value, .75,  na.rm = TRUE),
-                .groups = "drop")
-  })
-
-```
-
-## Copernicus CDS CMIP6 SST Projections to 2100
-
-```{r cds-setup}
-#| label: cds-setup
-#| echo: true
-#| eval: false
-
-# ── Run once to store your CDS Personal Access Token securely ─────────────────
-# 1. Log in at https://cds.climate.copernicus.eu/
-# 2. Go to Profile (top-right) → Personal Access Tokens → copy your token
-# 3. Paste it below and run this chunk once — it will not need to be run again.
-wf_set_key(key = "YOUR-PERSONAL-ACCESS-TOKEN")
-```
-
-```{r cds-cmip6-sst-download}
-#| label: cds-cmip6-sst-download
-#| cache: true
-#| echo: false
-#| message: false
-
-# ── Download CMIP6 sea surface temperature (tos) from Copernicus CDS ──────────
-# Five coupled ScenarioMIP models confirmed to have tos for historical (1950–2014)
-# and all three needed SSPs (2015–2100) in the CDS projections-cmip6 dataset:
-# ACCESS-CM2, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR, UKESM1-0-LL.
-# Monthly resolution, spatially subsetted to a 3° box around Moorea LTER Site 1
-# (~17.5°S, 149.8°W).
-#
-# IMPORTANT: CDS returns only one model per request when multiple are listed —
-# requests are therefore submitted one per model × experiment (20 total).
-# With workers = 2, expect ~40–60 minutes on first run.
-
-# ── CDS key setup ─────────────────────────────────────────────────────────────
-# Locally: key was stored in the keyring via the cds-setup chunk.
-# On Code Ocean (or any environment without keyring): set the CDS_API_KEY
-# environment variable in your capsule's Secrets panel, and it will be used here.
-cds_api_key <- Sys.getenv("CDS_API_KEY", unset = "")
-if (nzchar(cds_api_key)) {
-  wf_set_key(key = cds_api_key)
-}
-
-sst_dir     <- here("Data", "cmip6_sst")
-all_months  <- as.list(sprintf("%02d", 1:12))
-moorea_area <- c(-16.0, -151.0, -19.0, -148.0)
-
-# Models confirmed viable on CDS for all required experiments
-viable_models <- c("access_cm2", "ipsl_cm6a_lr", "miroc6", "mpi_esm1_2_lr", "ukesm1_0_ll")
-
-# Map CDS snake_case names → NC filename fragment for existence check
-model_nc_name <- c(
-  access_cm2    = "ACCESS-CM2",
-  ipsl_cm6a_lr  = "IPSL-CM6A-LR",
-  miroc6        = "MIROC6",
-  mpi_esm1_2_lr = "MPI-ESM1-2-LR",
-  ukesm1_0_ll   = "UKESM1-0-LL"
-)
-
-experiments_cfg <- list(
-  list(exp = "historical",  years = 1950:2014),
-  list(exp = "ssp1_2_6",    years = 2015:2100),
-  list(exp = "ssp2_4_5",    years = 2015:2100),
-  list(exp = "ssp5_8_5",    years = 2015:2100)
-)
-
-# Create experiment output directories
-for (exp_cfg in experiments_cfg)
-  dir.create(file.path(sst_dir, exp_cfg$exp), recursive = TRUE, showWarnings = FALSE)
-
-# Build pending requests: skip any model-experiment whose NC already exists
-pending_requests <- list()
-for (exp_cfg in experiments_cfg) {
-  exp_dir <- file.path(sst_dir, exp_cfg$exp)
-  for (model_name in viable_models) {
-    nc_present <- any(grepl(model_nc_name[[model_name]],
-                            list.files(exp_dir, pattern = "\\.nc$")))
-    if (!nc_present) {
-      pending_requests <- c(pending_requests, list(list(
-        dataset_short_name  = "projections-cmip6",
-        temporal_resolution = "monthly",
-        experiment          = exp_cfg$exp,
-        variable            = "sea_surface_temperature",
-        model               = list(model_name),
-        year                = as.list(as.character(exp_cfg$years)),
-        month               = all_months,
-        area                = moorea_area,
-        target              = sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp)
-      )))
-    }
-  }
-}
-
-if (length(pending_requests) == 0) {
-  message("All model NC files already present — skipping CDS download.")
-} else if (!nzchar(cds_api_key)) {
-  stop(
-    "NC files are missing but no CDS API key is available.\n",
-    "  - Locally: run the cds-setup chunk once to store your key in the keyring.\n",
-    "  - On Code Ocean: add your token as a secret named CDS_API_KEY in the\n",
-    "    capsule's Environment > Secrets panel, then re-run."
+# Coefficient as "est (95% CI lo, hi)" plus a flag for CI excluding zero
+coef_ci <- function(m, par) {
+  fe <- fixef(m)[par, ]
+  list(
+    text     = sprintf("%s (95%% CI %s, %s)", fmt(fe[["Estimate"]]),
+                       fmt(fe[["Q2.5"]]), fmt(fe[["Q97.5"]])),
+    excludes0 = sign(fe[["Q2.5"]]) == sign(fe[["Q97.5"]])
   )
-} else {
-  message(sprintf("Submitting %d CDS requests (one per model × experiment)...",
-                  length(pending_requests)))
-  wf_request_batch(pending_requests, workers = 2, path = sst_dir)
-
-  # Extract each per-model zip to its experiment directory
-  for (exp_cfg in experiments_cfg) {
-    exp_dir <- file.path(sst_dir, exp_cfg$exp)
-    for (model_name in viable_models) {
-      zip_path <- file.path(sst_dir, sprintf("tos_%s_%s.zip", model_name, exp_cfg$exp))
-      if (file.exists(zip_path))
-        unzip(zip_path, exdir = exp_dir, overwrite = FALSE)
-    }
-  }
-}
-```
-
-```{r cds-cmip6-sst-process}
-#| label: cds-cmip6-sst-process
-#| cache: true
-#| dependson: ["cds-cmip6-sst-download"]
-#| echo: false
-#| message: false
-
-# ── Read CDS NetCDF files, extract Moorea grid cell, bias-correct ─────────────
-# Produces:
-#   wb_proj_bc   — ensemble p10/median/p90 per scenario-year (used in propagation)
-#   ann_cmip6_bc — per-model historical annual max SST (used for spread ribbon)
-
-sst_dir    <- "Data/cmip6_sst"
-moorea_lon <- -149.83
-moorea_lat <- -17.48
-
-# Extract model name from CMIP6 standard filename:
-# <var>_<freq>_<model>_<exp>_<variant>_<grid>_<period>.nc
-extract_model_name <- function(filepath) {
-  parts <- strsplit(basename(filepath), "_")[[1]]
-  if (length(parts) >= 3) parts[3] else "unknown"
 }
 
-read_tos_nc <- function(nc_path, experiment) {
-  nc <- nc_open(nc_path)
-  on.exit(nc_close(nc))
+coral_rd_main <- coef_ci(brms_sem_season_metab, "logrd_logcoral_z")
+coral_rd_fish <- coef_ci(brms_sem_season_metab_fish, "logrd_logcoral_z")
+fish_rd_fish  <- coef_ci(brms_sem_season_metab_fish, "logrd_logfish")
 
-  model <- extract_model_name(nc_path)
+# Absolute ELPD difference; "meaningful" if it exceeds 2 SE
+fish_elpd_diff <- abs(fish_loo_cmp[2, "elpd_diff"])
+fish_elpd_se   <- fish_loo_cmp[2, "se_diff"]
+fish_loo_meaningful <- fish_elpd_diff > 2 * fish_elpd_se
 
-  # Coordinates — handle 1-D regular, 2-D curvilinear, and NEMO (nav_lon/nav_lat) grids
-  lon <- tryCatch(ncvar_get(nc, "lon"),
-           error = \(e) tryCatch(ncvar_get(nc, "longitude"),
-             error = \(e2) ncvar_get(nc, "nav_lon")))
-  lat <- tryCatch(ncvar_get(nc, "lat"),
-           error = \(e) tryCatch(ncvar_get(nc, "latitude"),
-             error = \(e2) ncvar_get(nc, "nav_lat")))
-
-  # Normalise 0–360 longitudes to -180–180
-  lon_norm <- ifelse(lon > 180, lon - 360, lon)
-
-  if (length(dim(lon)) == 2) {
-    # Curvilinear grid
-    dist  <- sqrt((lon_norm - moorea_lon)^2 + (lat - moorea_lat)^2)
-    idx   <- which(dist == min(dist, na.rm = TRUE), arr.ind = TRUE)
-    tos_raw <- ncvar_get(nc, "tos")[idx[1, 1], idx[1, 2], ]
-  } else {
-    i_lon   <- which.min(abs(lon_norm - moorea_lon))
-    i_lat   <- which.min(abs(lat      - moorea_lat))
-    tos_raw <- ncvar_get(nc, "tos")[i_lon, i_lat, ]
-  }
-
-  # Time → calendar dates
-  time_raw   <- ncvar_get(nc, "time")
-  time_units <- ncatt_get(nc, "time", "units")$value
-  origin_str <- sub("^days since ", "", time_units)
-  dates      <- as.Date(origin_str) + as.integer(round(time_raw))
-
-  # Replace fill values with NA
-  fv <- ncatt_get(nc, "tos", "_FillValue")$value
-  if (length(fv) > 0) tos_raw[abs(tos_raw - fv) < abs(fv) * 1e-3] <- NA
-
-  # Convert Kelvin → Celsius if needed
-  u <- ncatt_get(nc, "tos", "units")$value
-  if (length(u) > 0 && grepl("^K$|kelvin", u, ignore.case = TRUE))
-    tos_raw <- tos_raw - 273.15
-
-  n <- min(length(dates), length(tos_raw))
-  tibble(model      = model,
-         experiment = experiment,
-         date       = dates[seq_len(n)],
-         tos        = as.numeric(tos_raw[seq_len(n)]))
-}
-
-# Read NC files directly from pre-extracted experiment directories.
-# (The download chunk extracts each per-model zip to its experiment directory,
-# so no unzipping is needed here.)
-all_tos <- map_dfr(c("historical", "ssp1_2_6", "ssp2_4_5", "ssp5_8_5"),
-  function(experiment) {
-    exp_dir  <- file.path(sst_dir, experiment)
-    nc_files <- list.files(exp_dir, pattern = "\\.nc$", full.names = TRUE)
-    if (length(nc_files) == 0) { warning("No NC files in: ", exp_dir); return(NULL) }
-    map_dfr(nc_files, \(f) tryCatch(
-      read_tos_nc(f, experiment),
-      error = \(e) { warning(basename(f), ": ", e$message); NULL }
-    ))
-  })
-
-# Annual maximum SST per model-year
-ann_tos <- all_tos |>
-  mutate(year = year(date)) |>
-  group_by(model, experiment, year) |>
-  summarise(ann_max = max(tos, na.rm = TRUE), .groups = "drop") |>
-  filter(is.finite(ann_max))
-
-# ── Anchor each model to observed MCR 2005-2025 mean ───
-# Bias-correct each CMIP6 model by shifting it to match the observed MCR mean
-# over the 2005–2025 overlap window. This is a simple additive delta correction
-# — it removes model-level biases while preserving each model's warming rate.
-obs_mean_mcr_cds <- mean(Year_Averages$Max_temp[Year_Averages$Year %in% 2005:2025],
-                         na.rm = TRUE)
-
-bias_tbl_cds <- ann_tos |>
-  filter(
-    (experiment == "historical"                            & year %in% 2005:2014) |
-    (experiment %in% c("ssp1_2_6","ssp2_4_5","ssp5_8_5") & year %in% 2015:2025)
-  ) |>
-  group_by(model) |>
-  summarise(model_mean = mean(ann_max, na.rm = TRUE), .groups = "drop") |>
-  mutate(bias = obs_mean_mcr_cds - model_mean)
-
-ann_tos_bc <- ann_tos |>
-  left_join(bias_tbl_cds, by = "model") |>
-  mutate(ann_max_bc = ann_max + bias)
-
-# ── Ensemble p10 / median / p90 per experiment-year ───────────────────────────
-ens_stats <- function(data, exp_name) {
-  data |>
-    filter(experiment == exp_name) |>
-    group_by(year) |>
-    summarise(p10    = quantile(ann_max_bc, 0.10, na.rm = TRUE),
-              median = quantile(ann_max_bc, 0.50, na.rm = TRUE),
-              p90    = quantile(ann_max_bc, 0.90, na.rm = TRUE),
-              .groups = "drop") |>
-    mutate(experiment = exp_name)
-}
-
-ssp_ens  <- bind_rows(
-  ens_stats(ann_tos_bc, "ssp1_2_6"),
-  ens_stats(ann_tos_bc, "ssp2_4_5"),
-  ens_stats(ann_tos_bc, "ssp5_8_5")
+tibble(
+  Model    = c("Main (no fish)", "With fish"),
+  coral_Rd = c(coral_rd_main$text, coral_rd_fish$text),
+  R2_Rd    = sapply(list(brms_sem_season_metab, brms_sem_season_metab_fish),
+                    \(m) bayes_r2_resp("logrd", fit = m))
 )
-hist_ens <- ens_stats(ann_tos_bc, "historical")
-
-# ── Build wb_proj_bc (structure expected by downstream propagation code) ───────
-ssp_long <- ssp_ens |>
-  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
-  mutate(scenario = case_when(
-    experiment == "ssp1_2_6" ~ "ssp126",
-    experiment == "ssp2_4_5" ~ "ssp245",
-    experiment == "ssp5_8_5" ~ "ssp585"
-  )) |>
-  select(year, scenario, percentile, tasmax_bc)
-
-# Historical 2005-2014 expanded across all three scenarios for the overlap window
-hist_long <- hist_ens |>
-  filter(year %in% 2005:2014) |>
-  pivot_longer(c(p10, median, p90), names_to = "percentile", values_to = "tasmax_bc") |>
-  select(year, percentile, tasmax_bc) |>
-  expand_grid(scenario = c("ssp126", "ssp245", "ssp585"))
-
-wb_proj_bc <- bind_rows(hist_long, ssp_long) |>
-  distinct(year, scenario, percentile, .keep_all = TRUE) |>
-  arrange(scenario, percentile, year) |>
-  filter(year %in% 2005:2100)
-
-# ── ann_cmip6_bc: historical per-model series for the 2005-2014 spread ribbon ─
-ann_cmip6_bc <- ann_tos_bc |>
-  filter(experiment == "historical")
 ```
 
-```{r wb-cmip6-propagate}
-#| label: wb-cmip6-propagate
+Total fish biomass was left out of the respiration sub-model for three reasons. First, fish respiration cannot plausibly drive community Rd at this site: field-based estimates of fish respiration were `r fmt(fish_rd_pct$min_pct, 1)`–`r fmt(fish_rd_pct$max_pct, 1)`% of measured Rd (median `r fmt(fish_rd_pct$median_pct, 1)`%). Second, log fish biomass and log coral cover were correlated across the seasonal observations (r = `r fmt(fish_rd_cor)`), because both followed the same multi-decadal trend as coral declined and fish biomass increased. With only `r n_rd_years` independent years, including both predictors split one shared signal between them. The coral cover coefficient was `r coral_rd_main$text` without fish and `r coral_rd_fish$text` with fish`r if (coral_rd_main$excludes0 && !coral_rd_fish$excludes0) ", so its credible interval widened to include zero" else ""`. Fish took a coefficient of `r fish_rd_fish$text`, which is implausibly large for a sub-1% metabolic contribution. Third, adding fish `r if (fish_loo_meaningful) "changed" else "did not meaningfully change"` out-of-sample prediction of Rd: the absolute difference in PSIS-LOO expected log predictive density for the joint Rd–Pmax likelihood was `r fmt(fish_elpd_diff, 1)` ± `r fmt(fish_elpd_se, 1)` (SE).
 
-# ── Propagate each SSP scenario through the reduced SEM ──────────────────────
-# Approach: two uncertainty sources are kept separate.
-#
-#   Temperature panel  — shows the raw CMIP6 inter-model spread (p10/p90 of
-#     the 10 bias-corrected models). This ribbon is NOT derived from the SEM.
-#
-#   Ecological panels  — driven by a single, deterministic ensemble-median
-#     temperature trajectory per scenario. All 3,000 SEM posterior draws use
-#     identical temperatures, so the ribbon reflects SEM path-coefficient
-#     uncertainty only. 
-#
+## Downstream effects of coral loss: structural causal models
 
+The seasonal SEM estimates every path at once. In a single joint model, each coefficient is conditioned on everything else in its equation, so some coefficients are direct effects, some are total effects, and some may be biased because they condition on a mediator or a collider (the "Table 2 fallacy"). Here we follow the structural causal model (SCM) workflow of Arif et al. (2022, *Ecosphere* 13:e3956) and Arif & MacNeil (2023, *Ecological Monographs* e1554) to estimate the causal effects of coral cover on the rest of the system:
 
-# ── Map scenario codes to experiment names used in ann_tos_bc ────────────────
-ssp_experiment <- c(ssp126 = "ssp1_2_6", ssp245 = "ssp2_4_5", ssp585 = "ssp5_8_5")
+1. Encode the assumed causal structure as a directed acyclic graph (DAG), including drivers we do not treat as outcomes.
+2. Check the DAG against the data using the conditional independencies it implies.
+3. For each effect of interest, use the backdoor criterion (`dagitty::adjustmentSets()`) to find a minimal set of covariates that blocks all non-causal paths between coral cover and the outcome, without conditioning on mediators or colliders.
+4. Fit one Bayesian regression per effect with exactly that adjustment set, and interpret only the coral coefficient.
 
-# Build a bias-corrected model × year temperature matrix for a given scenario
-get_model_temp_matrix <- function(scenario_name) {
-  exp_name <- ssp_experiment[[scenario_name]]
+The question is the downstream impact of coral loss, so coral cover is the exposure in every model. The outcomes are fleshy algae cover, herbivore, corallivore and total fish biomass, N content, Rd and Pmax. Effects are estimated as **total effects** (everything that follows from a change in coral cover, including algal replacement of lost coral) and, for metabolism, also as **direct effects** (holding fleshy algae and the other mediators constant, i.e. coral replaced by "other" substrate).
 
-  temps <- bind_rows(
-    ann_tos_bc |> filter(experiment == "historical", year %in% 2005:2014),
-    ann_tos_bc |> filter(experiment == exp_name,     year %in% 2015:2100)
-  ) |>
-    select(model, year, ann_max_bc)
+### Causal DAG
 
-  # Retain only models with a complete, non-missing 96-year series
-  complete_models <- temps |>
-    group_by(model) |>
-    summarise(n = n(), ok = all(!is.na(ann_max_bc)), .groups = "drop") |>
-    filter(n == 96L, ok) |>
-    pull(model)
+The initial DAG differs from the SEM in one important way: coral cover is treated as a cause of same-year fleshy algae cover (space released by coral mortality is colonised by algae), while algae affect coral only with a lag (previous-year algae suppress coral recovery). Temperature can trigger disturbance (bleaching), and disturbance can act on metabolism directly (bleached coral photosynthesises less before it dies; storms scour the benthos). Fish affect N content through excretion and contribute to Rd. Rd and Pmax share unmeasured drivers (dashed bidirected arc). Season affects metabolism only, so it is a precision covariate rather than a confounder.
 
-  temps |>
-    filter(model %in% complete_models) |>
-    arrange(model, year) |>
-    pivot_wider(names_from = year, values_from = ann_max_bc) |>
-    select(-model) |>
-    as.matrix()                          # n_complete_models × 96
+The revised DAG adds arrows after testing the initial DAG against the data (next section): Year is linked to every annual variable as a proxy for slow, unmeasured drivers (fishing, land-based nutrients, regional change, the clustering of COTS and bleaching disturbances in time); herbivore and corallivore biomass are components of total fish biomass; and previous-year herbivores facilitate coral (grazing frees space for coral recruits).
+
+```{r coral-scm-dag}
+#| label: fig-coral-scm-dag
+#| fig-cap: "Causal DAGs for the downstream effects of coral cover. Red = exposure; blue = downstream outcomes; grey = other variables. Green arrows were added to the initial DAG after testing its implied independencies. The dashed arc is a residual correlation (shared unmeasured causes) between Rd and Pmax."
+#| fig-width: 12
+#| fig-height: 14
+
+# dagitty is called with :: because its edges() masks igraph::edges()
+coral_dag_text <- 'dag {
+  Year -> Temp
+  Temp -> Dist
+  Temp -> Coral ; Temp -> Fleshy ; Temp -> Rd ; Temp -> Pmax
+  Dist -> Coral ; Dist -> Fleshy ; Dist -> Rd ; Dist -> Pmax
+  CoralLag -> Coral ; CoralLag -> FleshyLag ; FleshyLag -> Fleshy ; FleshyLag -> Coral
+  CoralLag -> CorallivLag ; FleshyLag -> HerbLag
+  CorallivLag -> Coral ; CorallivLag -> Coralliv
+  HerbLag -> Fleshy ; HerbLag -> Herb
+  Coral -> Fleshy
+  Coral -> Coralliv ; Coral -> Herb ; Fleshy -> Herb
+  Coral -> Fish ; Fleshy -> Fish
+  Coral -> N ; Fleshy -> N ; Fish -> N
+  Coral -> Rd ; Fleshy -> Rd ; Fish -> Rd
+  Coral -> Pmax ; Fleshy -> Pmax ; N -> Pmax
+  Season -> Rd ; Season -> Pmax
+  Rd <-> Pmax
+}'
+coral_dag <- dagitty::dagitty(coral_dag_text)
+
+# Revised after the local tests: Year as a proxy for slow unmeasured drivers
+# of every annual variable (lags included), fish groups as components of
+# total fish, and herbivore facilitation of coral
+coral_dag_revised <- dagitty::dagitty(sub(
+  "Year -> Temp",
+  paste("Year -> Temp ; Year -> Dist ; Year -> Coral ; Year -> Fleshy ;",
+        "Year -> Fish ; Year -> Herb ; Year -> Coralliv ; Year -> N ;",
+        "Year -> CoralLag ; Year -> FleshyLag ; Year -> HerbLag ; Year -> CorallivLag ;",
+        "Herb -> Fish ; Coralliv -> Fish ; HerbLag -> Coral"),
+  coral_dag_text, fixed = TRUE
+))
+
+# DAG node -> modelled variable
+coral_node_vars <- c(
+  Year = "Year", Temp = "temperature", Dist = "Disturbance",
+  CoralLag = "lr_coral_lag1", FleshyLag = "lr_fleshy_lag1",
+  HerbLag = "logherbs_lag1", CorallivLag = "logcoralliv_lag1",
+  Coral = "logcoral", Fleshy = "logfleshy", Herb = "logherbs",
+  Coralliv = "logcoralliv", Fish = "logfish", N = "logN",
+  Rd = "logrd", Pmax = "logpmax", Season = "summer"
+)
+coral_node_labels <- c(
+  Year = "Year", Temp = "Max\ntemperature", Dist = "Disturbance",
+  CoralLag = "Coral\n(t\u22121)", FleshyLag = "Fleshy algae\n(t\u22121)",
+  HerbLag = "Herbivores\n(t\u22121)", CorallivLag = "Corallivores\n(t\u22121)",
+  Coral = "Coral\ncover", Fleshy = "Fleshy algae\ncover", Herb = "Herbivore\nbiomass",
+  Coralliv = "Corallivore\nbiomass", Fish = "Total fish\nbiomass", N = "N content",
+  Rd = "Rd", Pmax = "Pmax", Season = "Season"
+)
+coral_outcomes <- c("Fleshy", "Herb", "Coralliv", "Fish", "N", "Rd", "Pmax")
+coral_outcome_labels <- c(
+  Fleshy = "Fleshy algae cover", Herb = "Herbivore biomass",
+  Coralliv = "Corallivore biomass", Fish = "Total fish biomass",
+  N = "N content", Rd = "Ecosystem Rd", Pmax = "Ecosystem Pmax"
+)
+
+coral_dag_coords <- tribble(
+  ~name,          ~x,  ~y,
+  "Year",          0,   7,
+  "Temp",          2,   7,
+  "Dist",          4,   7,
+  "CoralLag",      0,   4.5,
+  "CorallivLag",   2,   5.5,
+  "FleshyLag",     0,   1.5,
+  "HerbLag",       2,   0,
+  "Coral",         4,   4.5,
+  "Fleshy",        4,   1.5,
+  "Coralliv",      6.5, 5.5,
+  "Fish",          6.5, 3,
+  "Herb",          6.5, 0,
+  "N",             8.5, 1.5,
+  "Rd",           10.5, 4.5,
+  "Pmax",         10.5, 1.5,
+  "Season",       12.5, 3
+)
+
+# Edge list with ends trimmed to an elliptical box around each node label;
+# `added` flags edges that are not in the initial DAG
+dag_edge_data <- function(dag, coords = coral_dag_coords, a = 0.65, b = 0.5,
+                          base = coral_dag) {
+  base_edges <- with(dagitty::edges(base), paste(v, w))
+  as_tibble(dagitty::edges(dag)) |>
+    transmute(from = as.character(v), to = as.character(w), type = as.character(e),
+              added = !paste(from, to) %in% base_edges) |>
+    left_join(select(coords, from = name, x, y), by = "from") |>
+    left_join(select(coords, to = name, xend = x, yend = y), by = "to") |>
+    mutate(
+      len = sqrt((xend - x)^2 + (yend - y)^2),
+      ux  = (xend - x) / len,
+      uy  = (yend - y) / len,
+      gap = 1 / sqrt((ux / a)^2 + (uy / b)^2),
+      x = x + gap * ux, y = y + gap * uy,
+      xend = xend - gap * ux, yend = yend - gap * uy
+    )
 }
 
-# ── CMIP6 ensemble temperature summary (for Temperature panel display) ────────
-# Returns median, p10, and p90 across models for each scenario/year.
-get_temp_ensemble_summary <- function(scenario_name) {
-  temp_raw <- get_model_temp_matrix(scenario_name)   # n_models × 96 (2005:2100)
+coral_role_cols <- c("Exposure (coral cover)" = "#d6604d", "Outcome" = "#4393c3",
+                     "Adjusted for" = "#fdb863", "Not adjusted" = "grey90")
 
-  # Historical (2005–2025): observed MCR temperatures, zero ribbon — mirrors the
-  # two-period approach used for ecological variables so all panels are consistent.
-  hist_rows <- Year_Averages |>
-    filter(Year %in% 2005:2025) |>
-    arrange(Year) |>
-    transmute(
-      scenario = scenario_name,
-      variable = "Temperature",
-      year     = Year,
-      median   = Max_temp,
-      lo95     = Max_temp, hi95 = Max_temp,
-      lo50     = Max_temp, hi50 = Max_temp
+dag_node_data <- function(outcomes, adjusted = character(0)) {
+  coral_dag_coords |>
+    mutate(
+      label = coral_node_labels[name],
+      role  = case_when(name == "Coral"     ~ "Exposure (coral cover)",
+                        name %in% outcomes  ~ "Outcome",
+                        name %in% adjusted  ~ "Adjusted for",
+                        TRUE                ~ "Not adjusted"),
+      role  = factor(role, names(coral_role_cols))
     )
+}
 
-  # Projection (2026–2100): CMIP6 ensemble median + p10/p90 inter-model spread
-  proj_rows <- tibble(
-    scenario = scenario_name,
-    variable = "Temperature",
-    year     = 2026:2100,
-    median   = apply(temp_raw[, 22:96, drop = FALSE], 2, median),
-    lo95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.10),
-    hi95     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.90),
-    lo50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.25),
-    hi50     = apply(temp_raw[, 22:96, drop = FALSE], 2, quantile, 0.75)
+plot_coral_dag <- function(nodes, edges, label_size = 3.5) {
+  ggplot() +
+    geom_segment(data = filter(edges, type == "->"),
+                 aes(x = x, y = y, xend = xend, yend = yend, colour = added),
+                 arrow = arrow(length = unit(2, "mm"), type = "closed"),
+                 linewidth = 0.4) +
+    geom_curve(data = filter(edges, type == "<->"),
+               aes(x = x, y = y, xend = xend, yend = yend), curvature = -0.4,
+               linetype = "dashed", colour = "grey45", linewidth = 0.4,
+               arrow = arrow(length = unit(2, "mm"), type = "closed", ends = "both")) +
+    geom_label(data = nodes, aes(x = x, y = y, label = label, fill = role),
+               size = label_size, lineheight = 0.85, label.size = 0.2,
+               key_glyph = "rect") +
+    scale_fill_manual(values = coral_role_cols, name = NULL, drop = FALSE) +
+    scale_colour_manual(values = c(`FALSE` = "grey45", `TRUE` = "#1b7837"),
+                        labels = c(`FALSE` = "Initial DAG", `TRUE` = "Added after testing"),
+                        name = NULL) +
+    scale_x_continuous(expand = expansion(add = 0.8)) +
+    scale_y_continuous(expand = expansion(add = 0.6)) +
+    theme_void() +
+    theme(legend.position = "bottom", legend.box = "vertical",
+          text = element_text(size = 13))
+}
+
+(plot_coral_dag(dag_node_data(coral_outcomes), dag_edge_data(coral_dag)) +
+    ggtitle("a) Initial DAG") + theme(legend.position = "none")) /
+  (plot_coral_dag(dag_node_data(coral_outcomes), dag_edge_data(coral_dag_revised)) +
+     ggtitle("b) Revised DAG"))
+ggsave(here("Output", "fig_scm_dag.pdf"), width = 12, height = 14)
+```
+
+### Testable implications of the DAG
+
+Every missing arrow in a DAG is an assumption, and many of them imply that two variables are independent once some others are held fixed. These implications can be checked against the annual data (Rd, Pmax and Season are seasonal, so they are left out here). Each test is a partial correlation; values far from zero suggest a missing arrow. With 95% intervals, about 5% of tests should exclude zero by chance even if the DAG is right. With about 19 years the tests also have little power, so passing is a screen for gross misspecification rather than a confirmation of the DAG.
+
+```{r coral-scm-data}
+#| label: coral-scm-data
+
+# Rebuilt from the source tables rather than semdata_season, whose NAs are
+# replaced by 0 placeholders for the brms subset() machinery
+coral_scm_log <- YearSeason_Averages |>
+  left_join(annual_lags, by = "Year") |>
+  arrange(Year, Season) |>
+  transmute(
+    Year, Season, Disturbance,
+    annual_row       = !duplicated(Year),
+    seasonal_row     = !is.na(Season),
+    year_f           = factor(Year),
+    summer           = case_when(Season == "Summer" ~ 0.5,
+                                 Season == "Winter" ~ -0.5,
+                                 TRUE ~ 0),
+    temperature      = Max_temp,
+    lr_coral_lag1, lr_fleshy_lag1,
+    logherbs_lag1    = log(Herbivores_lag1),
+    logcoralliv_lag1 = log(Corallivore_lag1),
+    logcoral         = log(mean_coral / 100),
+    logfleshy        = log(mean_fleshy / 100),
+    logherbs         = log(Herbivores),
+    logcoralliv      = log(Corallivore),
+    logfish          = log(fish_biomass_g_m2),
+    logN             = log(N_percent),
+    logrd            = log(Rd),
+    logpmax          = log(Pmax)
   )
 
-  bind_rows(hist_rows, proj_rows)
-}
+# Annual variables are standardised over one row per year, Rd and Pmax over
+# the seasonal rows; the means and SDs are kept to back-transform effects
+scm_annual_vars   <- c("Year", "temperature", "lr_coral_lag1", "lr_fleshy_lag1",
+                       "logherbs_lag1", "logcoralliv_lag1", "logcoral", "logfleshy",
+                       "logherbs", "logcoralliv", "logfish", "logN")
+scm_seasonal_vars <- c("logrd", "logpmax")
 
-propagate_wb_ssp <- function(scenario_name) {
+coral_scm_scale <- bind_rows(
+  map_dfr(scm_annual_vars, \(v) {
+    x <- coral_scm_log[[v]][coral_scm_log$annual_row]
+    tibble(var = v, mean = mean(x, na.rm = TRUE), sd = sd(x, na.rm = TRUE))
+  }),
+  map_dfr(scm_seasonal_vars, \(v) {
+    x <- coral_scm_log[[v]][coral_scm_log$seasonal_row]
+    tibble(var = v, mean = mean(x, na.rm = TRUE), sd = sd(x, na.rm = TRUE))
+  })
+)
 
-  n_pct_log_mean <- mean(log(Year_Averages$N_percent), na.rm = TRUE)
-  n_pct_log_sd   <- sd(log(Year_Averages$N_percent),   na.rm = TRUE)
+coral_scm_data <- coral_scm_log |>
+  mutate(across(all_of(scm_annual_vars), \(x) scale_on(x, annual_row)),
+         across(all_of(scm_seasonal_vars), \(x) scale_on(x, seasonal_row)))
 
-  # ── CMIP6 ensemble-median temperature trajectory ──────────────────────────
-  temp_raw     <- get_model_temp_matrix(scenario_name)
-  temp_med_raw <- apply(temp_raw, 2, median)               # length 96 (2005:2100)
-  temp_z_cmip6 <- (temp_med_raw - modelmean$temperature) / modelsd$temperature
-
-  cmip6_z_2025 <- temp_z_cmip6[21]                         # index 21 = year 2025
-  tm_proj      <- matrix(rep(temp_z_cmip6[22:96], each = n_r), nrow = n_r)  # n_r × 75
-
-  # ── yearresid: held constant at its 2025 observed value ──────────────────
-  # The yearresid captures secular (non-temperature) trends up to 2025. For
-  # the projection period we hold it constant 
-  yr_2025 <- {
-    row <- yr_resid_lookup |> filter(Year == 2025L)
-    if (nrow(row) == 1L && !is.na(row$yr)) row$yr else 0
-  }
-  yr_rv_proj <- rep(yr_2025, 75)   # constant at 2025 level throughout projection
-  yrm_proj   <- matrix(rep(yr_rv_proj, each = n_r), nrow = n_r)
-
-  # ── SEM baseline at 2025 (CMIP6 T_2025 + observed yearresid_2025) ────────
-  cm_base  <- pmin(post_r$b_logcoral_temperature * cmip6_z_2025 +
-                   post_r$b_logcoral_yearresid   * yr_2025 +
-                   post_r$b_logcoral_Intercept, z_ceil_coral)          # n_r
-  rm_base  <- post_r$b_logrd_logcoral          * cm_base + post_r$b_logrd_Intercept
-  fm_base  <- pmin(post_r$b_logfleshy_logcoral * cm_base +
-                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
-  pm_base  <- post_r$bsp_logpmax_milogrd  * rm_base + post_r$b_logpmax_Intercept
-  nm_base  <- post_r$bsp_Npercent_milogrd * rm_base + post_r$b_Npercent_Intercept
-
-  # ── SEM projection at 2026–2100 ───────────────────────────────────────────
-  cm_proj  <- pmin(rs(post_r$b_logcoral_temperature, tm_proj) +
-                   rs(post_r$b_logcoral_yearresid,   yrm_proj) +
-                   post_r$b_logcoral_Intercept, z_ceil_coral)
-  rm_proj  <- rs(post_r$b_logrd_logcoral,          cm_proj) + post_r$b_logrd_Intercept
-  fm_proj  <- pmin(rs(post_r$b_logfleshy_logcoral, cm_proj) +
-                   post_r$b_logfleshy_Intercept, z_ceil_fleshy)
-  pm_proj  <- rs(post_r$bsp_logpmax_milogrd,  rm_proj) + post_r$b_logpmax_Intercept
-  nm_proj  <- rs(post_r$bsp_Npercent_milogrd, rm_proj) + post_r$b_Npercent_Intercept
-
-  # ── Observed z-scores at 2025 (anchor points) ────────────────────────────
-  obs25 <- Year_Averages |> filter(Year == 2025)
-  obs_cm_z <- (log(obs25$mean_coral)  - modelmean$logcoral)  / modelsd$logcoral
-  obs_rm_z <- (log(obs25$Rd)          - modelmean$logrd)     / modelsd$logrd
-  obs_fm_z <- (log(obs25$mean_fleshy) - modelmean$logfleshy) / modelsd$logfleshy
-  obs_pm_z <- (log(obs25$Pmax)        - modelmean$logpmax)   / modelsd$logpmax
-  # N_percent: use last non-NA year if 2025 is missing
-  n_anchor <- if (!is.na(obs25$N_percent)) obs25$N_percent else {
-    Year_Averages |> filter(!is.na(N_percent)) |> slice_max(Year, n = 1) |> pull(N_percent)
-  }
-  obs_nm_z <- (log(n_anchor) - n_pct_log_mean) / n_pct_log_sd
-
-  # ── Delta-anchored projection matrices ───────────────────────────────────
-  # anchored[draw, year] = obs_z_2025 + (proj[draw, year] - base[draw])
-  cm_anch <- pmin(sweep(cm_proj, 1, cm_base, "-") + obs_cm_z, z_ceil_coral)
-  rm_anch <- sweep(rm_proj, 1, rm_base, "-") + obs_rm_z
-  fm_anch <- pmin(sweep(fm_proj, 1, fm_base, "-") + obs_fm_z, z_ceil_fleshy)
-  pm_anch <- sweep(pm_proj, 1, pm_base, "-") + obs_pm_z
-  nm_anch <- sweep(nm_proj, 1, nm_base, "-") + obs_nm_z
-
-  proj_rows <- imap_dfr(
-    list(`Coral Cover`  = bt_log(cm_anch, modelmean$logcoral,  modelsd$logcoral),
-         Respiration    = bt_log(rm_anch, modelmean$logrd,     modelsd$logrd),
-         `Fleshy Algae` = bt_log(fm_anch, modelmean$logfleshy, modelsd$logfleshy),
-         Pmax           = bt_log(pm_anch, modelmean$logpmax,   modelsd$logpmax),
-         `N Content`    = bt_log(nm_anch, n_pct_log_mean,      n_pct_log_sd)),
-    function(mat, vname) {
-      tibble(scenario = scenario_name, variable = vname,
-             year = rep(2026:2100, each = n_r), value = as.vector(mat)) |>
-        group_by(scenario, variable, year) |>
-        summarise(median = median(value, na.rm = TRUE),
-                  lo95   = quantile(value, .025, na.rm = TRUE),
-                  hi95   = quantile(value, .975, na.rm = TRUE),
-                  lo50   = quantile(value, .25,  na.rm = TRUE),
-                  hi50   = quantile(value, .75,  na.rm = TRUE),
-                  .groups = "drop")
-    })
-
-  # ── Historical period: observed values directly, zero ribbon ─────────────
-  hist_rows <- Year_Averages |>
-    filter(Year %in% 2005:2025) |>
-    arrange(Year) |>
-    transmute(scenario = scenario_name, year = Year,
-              `Coral Cover` = mean_coral, Respiration = Rd,
-              `Fleshy Algae` = mean_fleshy, Pmax = Pmax, `N Content` = N_percent) |>
-    pivot_longer(cols = -c(scenario, year), names_to = "variable", values_to = "median") |>
-    mutate(lo95 = median, hi95 = median, lo50 = median, hi50 = median)
-
-  bind_rows(hist_rows, proj_rows)
-}
-
-wb_proj_eco <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), propagate_wb_ssp))
-
-# Temperature rows: ensemble p10/p90 ribbon (not SEM-derived)
-wb_temp_tbl <- bind_rows(lapply(c("ssp126", "ssp245", "ssp585"), get_temp_ensemble_summary))
-
-# Combined table used by plotting and summary table
-wb_proj_tbl <- bind_rows(wb_temp_tbl, wb_proj_eco)
-
-# ── Tidy for plotting ─────────────────────────────────────────────────────────
-wb_ssp_labels  <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5", ssp585 = "SSP5-8.5")
-wb_ssp_colours <- c(ssp126 = "#2196F3",  ssp245 = "#FF9800",   ssp585 = "#E53935")
-wb_var_order   <- c("Temperature","Coral Cover","Respiration",
-                    "Fleshy Algae","Pmax","N Content")
-wb_var_units   <- c(Temperature    = "\u00b0C",
-                    `Coral Cover`  = "% cover",
-                    Respiration    = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
-                    `Fleshy Algae` = "% cover",
-                    Pmax           = "mmol O\u2082 m\u207b\u00b2 hr\u207b\u00b9",
-                    `N Content`    = "% N")
-
-wb_plot_tbl <- wb_proj_tbl |>
-  mutate(variable       = factor(variable, levels = wb_var_order),
-         scenario_label = wb_ssp_labels[scenario])
+# Years available to the annual models
+coral_scm_data |>
+  filter(annual_row) |>
+  summarise(across(all_of(scm_annual_vars), \(x) sum(!is.na(x)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "n_years")
 ```
 
-```{r fig-wb-cmip6}
-#| label: fig-wb-cmip6
-#| cache: false
-#| fig-cap: "**Figure 7.** Ecosystem projections under CMIP6 SSP emissions scenarios (2005–2100)."
-#| fig-width: 7.2
-#| fig-height: 7.87
+```{r coral-scm-local-tests}
+#| label: fig-coral-scm-local-tests
+#| fig-cap: "Conditional independencies implied by each DAG among the annual variables. Points are partial correlations with 95% intervals; the DAG predicts zero for every row. Red = interval excludes zero. Only failed tests are labelled; 'A _||_ B | C' reads 'A is independent of B given C'."
+#| fig-width: 12
+#| fig-height: 9
 
-wb_y_limits <- list(
-  Temperature    = NULL,
-  `Coral Cover`  = c(0, NA),
-  Respiration    = c(0, NA),
-  `Fleshy Algae` = c(30, 100),
-  Pmax           = c(60, NA),
-  `N Content`    = c(0.3, NA)
+annual_nodes <- setdiff(names(coral_node_vars), c("Rd", "Pmax", "Season"))
+
+coral_lt_data <- coral_scm_data |>
+  filter(annual_row) |>
+  select(all_of(unname(coral_node_vars[annual_nodes]))) |>
+  set_names(annual_nodes) |>
+  drop_na()
+
+run_local_tests <- function(dag) {
+  cis <- dagitty::impliedConditionalIndependencies(dag) |>
+    keep(\(ci) all(c(ci$X, ci$Y, ci$Z) %in% annual_nodes))
+  dagitty::localTests(dag, data = coral_lt_data, type = "cis", tests = cis,
+                      abbreviate.names = FALSE) |>
+    as_tibble(rownames = "test") |>
+    rename(lo = `2.5%`, hi = `97.5%`) |>
+    mutate(flag = sign(lo) == sign(hi))
+}
+
+coral_local_tests <- bind_rows(
+  `a) Initial DAG` = run_local_tests(coral_dag),
+  `b) Revised DAG` = run_local_tests(coral_dag_revised),
+  .id = "dag"
 )
 
-# Y-axis labels: variable name + (units) on new line for ≥10 pt readability
-# Use expression(atop()) for labels with superscripts/subscripts — plain Unicode
-# characters for those (e.g. ⁻², O₂) are not reliably covered by PDF fonts.
-wb_var_labels <- list(
-  Temperature    = "Temperature\n(\u00b0C)",
-  `Coral Cover`  = "Coral Cover\n(% cover)",
-  Respiration    = expression(atop("Ecosystem Respiration", "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-  `Fleshy Algae` = "Fleshy Macroalgae and Turf\n(% cover)",
-  Pmax           = expression(atop("Ecosystem P"[max], "(mmol O"[2]*" m"^-2*" hr"^-1*")")),
-  `N Content`    = "Algal N Content\n(% N)"
-)
+coral_lt_summary <- coral_local_tests |>
+  group_by(dag) |>
+  summarise(n_tests = n(), n_fail = sum(flag), expected = 0.05 * n())
+coral_lt_summary
 
-# Smooth trajectories for cleaner visualisation (projection period only):
-#   Temperature  → median smoothed k=11; ribbon (inter-model p10/p90) smoothed k=5.
-#   Ecological   → both median and ribbons smoothed k=5.
-# Historical period (2005–2025) is never smoothed; observed values are unchanged.
-wb_plot_tbl_smooth <- wb_plot_tbl |>
-  dplyr::group_by(variable, scenario) |>
-  dplyr::arrange(year) |>
-  dplyr::mutate(
-    is_temp = as.character(variable) == "Temperature",
-    k       = dplyr::if_else(is_temp, 11L, 5L),
-    in_proj = year > 2025,
-    median_s = dplyr::if_else(
-      in_proj,
-      zoo::rollapply(median, width = k[1], FUN = mean, align = "center",
-                     partial = TRUE, fill = NA, na.rm = TRUE),
-      median
-    ),
-    lo95_s = dplyr::if_else(
-      in_proj,
-      zoo::rollapply(lo95, width = 5L, FUN = mean, align = "center",
-                     partial = TRUE, fill = NA, na.rm = TRUE),
-      lo95
-    ),
-    hi95_s = dplyr::if_else(
-      in_proj,
-      zoo::rollapply(hi95, width = 5L, FUN = mean, align = "center",
-                     partial = TRUE, fill = NA, na.rm = TRUE),
-      hi95
-    )
+coral_local_tests |>
+  group_by(dag) |>
+  mutate(rank = rank(estimate, ties.method = "first")) |>
+  ungroup() |>
+  ggplot(aes(x = estimate, y = rank, colour = flag)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange(aes(xmin = lo, xmax = hi), size = 0.15, linewidth = 0.3) +
+  geom_text(data = \(d) filter(d, flag),
+            aes(x = if_else(estimate > 0, lo, hi), label = test,
+                hjust = if_else(estimate > 0, 1.03, -0.03)),
+            size = 2.6) +
+  scale_colour_manual(values = c(`FALSE` = "grey60", `TRUE` = "firebrick"), guide = "none") +
+  scale_x_continuous(limits = c(-1.6, 1.6), breaks = seq(-1, 1, 0.5)) +
+  facet_wrap(~ dag, scales = "free_y") +
+  labs(x = "Partial correlation", y = "Implied independence (ranked)") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        text = element_text(size = 13))
+```
+
+Under the initial DAG, `r coral_lt_summary$n_fail[1]` of `r coral_lt_summary$n_tests[1]` implied independencies failed (about `r round(coral_lt_summary$expected[1])` expected by chance). Almost all of the failures involved Year: coral, fleshy algae, fish, herbivores, corallivores, N content and disturbance all trend through time in ways that temperature alone does not explain. The largest single failure was total fish biomass and herbivore biomass being independent given cover, which cannot hold because herbivores are part of total fish biomass. Previous-year herbivores were also associated with coral beyond what previous-year algae explained. After adding these arrows, `r coral_lt_summary$n_fail[2]` of `r coral_lt_summary$n_tests[2]` tests failed, in line with chance. The remaining failures (a residual association between herbivore and corallivore biomass, and between total fish and previous-year algae) point to shared drivers of fish groups that the DAG does not represent; neither changes the adjustment sets for coral effects below. All effects below are estimated under the revised DAG, with the initial DAG shown for comparison.
+
+### Adjustment sets from the backdoor criterion
+
+For each effect, `adjustmentSets()` returns the minimal sets of covariates that close every backdoor path from coral cover to the outcome. When more than one minimal set exists the smallest is used. Total effects must not adjust for mediators (e.g. fleshy algae for the effect on Pmax), while direct effects must adjust for them. Season is added to the metabolism models as a precision covariate: it is not on any backdoor path, but it explains outcome variance.
+
+```{r coral-scm-adjustment-sets}
+#| label: coral-scm-adjustment-sets
+
+coral_dags <- list("Revised DAG" = coral_dag_revised, "Initial DAG" = coral_dag)
+
+pick_adjustment <- function(dag, outcome, effect) {
+  sets <- dagitty::adjustmentSets(dag, exposure = "Coral", outcome = outcome,
+                                  effect = effect)
+  if (length(sets) == 0) stop("Coral -> ", outcome, " (", effect, ") is not identifiable")
+  sort(sets[[which.min(lengths(sets))]])
+}
+
+coral_estimands <- bind_rows(
+  tibble(dag = "Revised DAG", outcome = coral_outcomes, effect = "total"),
+  tibble(dag = "Revised DAG", outcome = c("Rd", "Pmax"), effect = "direct"),
+  tibble(dag = "Initial DAG", outcome = coral_outcomes, effect = "total")
+) |>
+  mutate(
+    adjust    = pmap(list(dag, outcome, effect),
+                     \(d, o, e) pick_adjustment(coral_dags[[d]], o, e)),
+    precision = map(outcome, \(o) if (o %in% c("Rd", "Pmax")) "Season" else character(0)),
+    estimand  = glue("{coral_outcome_labels[outcome]} ({effect})")
+  )
+
+coral_estimands |>
+  transmute(
+    DAG = dag, Outcome = coral_outcome_labels[outcome], Effect = effect,
+    `Adjustment set` = map_chr(adjust, \(a) paste(gsub("\n", " ", coral_node_labels[a]),
+                                                  collapse = ", ")),
+    `Precision covariates` = map_chr(precision, \(p) paste(p, collapse = ", "))
   ) |>
-  dplyr::ungroup()
+  kbl() |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "left")
+```
 
-make_wb_panel <- function(vname) {
-  d_proj <- wb_plot_tbl_smooth |> filter(variable == vname, year > 2025)
-  obs_v  <- Year_Averages |>
-    select(year = Year,
-           Temperature    = Max_temp,
-           `Coral Cover`  = mean_coral,
-           Respiration    = Rd,
-           `Fleshy Algae` = mean_fleshy,
-           Pmax           = Pmax,
-           `N Content`    = N_percent) |>
-    pivot_longer(-year, names_to = "variable", values_to = "obs") |>
-    filter(variable == vname)
-  ylim <- wb_y_limits[[vname]]
-  ylab <- wb_var_labels[[vname]]
+```{r coral-scm-adjustment-dags}
+#| label: fig-coral-scm-adjustment-dags
+#| fig-cap: "Adjustment sets for each effect of coral cover under the revised DAG. Red = exposure, blue = outcome, orange = covariates adjusted for. Every other variable is left out of that model."
+#| fig-width: 16
+#| fig-height: 13
 
-  # Ribbon and lines drawn only for projection period (2026–2100);
-  # hindcast (2005–2025) shows raw observed points only.
-  p <- ggplot(mapping = aes(colour = scenario, fill = scenario)) +
-    annotate("rect", xmin = 2025.5, xmax = 2100, ymin = -Inf, ymax = Inf,
-             fill = "grey92", alpha = .6) +
-    geom_ribbon(data = d_proj, aes(x = year, ymin = lo95_s, ymax = hi95_s),
-                alpha = 0.25, colour = NA) +
-    geom_line(data = d_proj, aes(x = year, y = median_s), linewidth = 0.7) +
-    geom_point(data = obs_v, aes(x = year, y = obs),
-               colour = "black", size = 1.5, shape = 21, fill = "white",
-               inherit.aes = FALSE) +
-    geom_vline(xintercept = 2025.5, linetype = "dashed",
-               colour = "grey50", linewidth = .4) +
-    scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
-    scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels, name = "Scenario") +
-    scale_x_continuous(breaks = seq(2010, 2100, 20)) +
-    labs(x = NULL, y = ylab) +
-    theme_bw(base_size = 10) +
-    theme(
-      legend.position  = "none",
-      plot.title       = element_blank(),
-      panel.grid.minor = element_blank(),
-      axis.title.y     = element_text(size = 10, lineheight = 1.1)
-    )
-  if (!is.null(ylim)) p <- p + coord_cartesian(ylim = ylim)
-  p
+coral_main_estimands <- filter(coral_estimands, dag == "Revised DAG")
+
+adj_nodes <- coral_main_estimands |>
+  mutate(nodes = map2(outcome, adjust, \(o, a) dag_node_data(o, a))) |>
+  select(estimand, nodes) |>
+  unnest(nodes)
+# Edge colour is not needed here, so every edge is drawn as "initial"
+adj_edges <- tidyr::crossing(estimand = coral_main_estimands$estimand,
+                             dag_edge_data(coral_dag_revised)) |>
+  mutate(added = FALSE)
+
+plot_coral_dag(adj_nodes, adj_edges, label_size = 2.6) +
+  facet_wrap(~ factor(estimand, coral_main_estimands$estimand), ncol = 3) +
+  guides(colour = "none") +
+  theme(strip.text = element_text(size = 13, face = "bold",
+                                  margin = margin(b = 4)))
+```
+
+### One model per causal effect
+
+Each effect gets its own `brm()` model with only coral cover, the adjustment set and any precision covariates. Annual outcomes are fit to one row per year. Rd and Pmax are fit to the seasonal rows with a year random intercept, because the annual predictors are repeated across the two seasons. All continuous variables are standardised (log scale for cover, biomass, N and metabolism), so the coral coefficient is the change in SD of the log outcome per SD of log coral cover. Priors are weakly informative, normal(0, 1) on coefficients.
+
+```{r coral-scm-fits}
+#| label: coral-scm-fits
+#| cache: true
+#| dependson: ["coral-scm-data", "coral-scm-adjustment-sets"]
+
+fit_coral_effect <- function(outcome, adjust, precision) {
+  resp     <- coral_node_vars[[outcome]]
+  preds    <- unname(coral_node_vars[c("Coral", adjust, precision)])
+  seasonal <- outcome %in% c("Rd", "Pmax")
+
+  dat <- coral_scm_data |>
+    filter(if (seasonal) seasonal_row else annual_row) |>
+    drop_na(all_of(c(resp, preds)))
+
+  rhs <- paste(c(preds, if (seasonal) "(1 | year_f)"), collapse = " + ")
+  pri <- prior(normal(0, 1), class = "b") +
+    prior(normal(0, 1), class = "Intercept") +
+    prior(exponential(1), class = "sigma")
+  if (seasonal) pri <- pri + prior(normal(0, 0.5), class = "sd")
+
+  brm(as.formula(paste(resp, "~", rhs)), data = dat, family = gaussian(),
+      prior = pri, chains = 4, iter = 4000, warmup = 2000, seed = 2738,
+      control = list(adapt_delta = 0.99), silent = 2, refresh = 0)
 }
 
-wb_panels <- lapply(wb_var_order, make_wb_panel)
-
-wb_legend_plot <- ggplot(
-  wb_plot_tbl_smooth |> filter(variable == "Temperature"),
-  aes(x = year, y = median_s, colour = scenario, fill = scenario)) +
-  geom_ribbon(aes(ymin = lo95_s, ymax = hi95_s), alpha = .25, colour = NA) +
-  geom_line(linewidth = .9) +
-  scale_colour_manual(values = wb_ssp_colours, labels = wb_ssp_labels,
-                      name = "CMIP6 Scenario") +
-  scale_fill_manual(  values = wb_ssp_colours, labels = wb_ssp_labels,
-                      name = "CMIP6 Scenario") +
-  guides(colour = guide_legend(override.aes = list(linewidth = 1.5))) +
-  theme_void() +
-  theme(legend.position  = "right", legend.direction = "vertical",
-        legend.title = element_text(size = 10, face = "bold"),
-        legend.text  = element_text(size = 10))
-wb_leg <- cowplot::get_legend(wb_legend_plot)
-
-wb_main <- (wrap_plots(wb_panels, ncol = 2) & theme(legend.position = "none")) +
-  plot_annotation(tag_levels = "a") &
-  theme(plot.tag = element_text(size = 10, face = "bold"))
-wb_fig7  <- cowplot::plot_grid(wb_main, wb_leg, ncol = 2, rel_widths = c(1, 0.15))
-
-# Export at 183 × 200 mm ; base_size = 10 → 10 pt at print size
-ggsave(here("Output", "fig7_cmip6_projections.pdf"), plot = wb_fig7,
-       width = 183, height = 200, units = "mm", device = cairo_pdf)
-ggsave(here("Output", "fig7_cmip6_projections.png"), plot = wb_fig7,
-       width = 183, height = 200, units = "mm", dpi = 300)
-
-wb_fig7
+coral_scm_fits <- coral_estimands |>
+  mutate(fit = pmap(list(outcome, adjust, precision), fit_coral_effect))
 ```
 
-```{r tbl-wb-cmip6}
-#| label: tbl-wb-cmip6
-#| tbl-cap: "CMIP6 SST ecosystem projections at 2050, 2075, and 2100 under three SSP scenarios (reduced Bayesian SEM)."
+```{r coral-scm-diagnostics}
+#| label: coral-scm-diagnostics
 
-wb_tbl_out <- bind_rows(lapply(c(2050, 2075, 2100), function(yr) {
-  wb_proj_tbl |>
-    filter(year == yr) |>
-    mutate(scenario_label = wb_ssp_labels[scenario],
-           label = sprintf("%.1f (%.1f\u2013%.1f)", median, lo95, hi95)) |>
-    select(variable, scenario_label, label) |>
-    pivot_wider(names_from = scenario_label, values_from = label) |>
-    mutate(Year = yr) |>
-    relocate(Year, variable)
-})) |>
-  arrange(variable, Year) |>
-  rename(Variable = variable)
-
-knitr::kable(wb_tbl_out, align = c("r","l","c","c","c"))
+# Convergence and sample size for every model
+coral_scm_fits |>
+  transmute(
+    estimand, dag,
+    n        = map_int(fit, nobs),
+    max_rhat = map_dbl(fit, \(f) max(brms::rhat(f), na.rm = TRUE)),
+    min_ess  = map_dbl(fit, \(f) min(posterior::summarise_draws(as_draws_df(f),
+                                                                "ess_bulk")$ess_bulk,
+                                    na.rm = TRUE)),
+    divergent = map_int(fit, \(f) sum(nuts_params(f) |>
+                                        filter(Parameter == "divergent__") |>
+                                        pull(Value)))
+  )
 ```
 
+### Visualising and interpreting the causal effects
+
+The coral coefficient is converted to an interpretable quantity: the expected percentage change in each outcome if coral cover were halved, with all other causes of the outcome held at their observed values. Because both coral cover and the outcomes are on the log scale, this is
+
+$$
+\%\Delta Y = 100\left[\exp\left(\beta \, \frac{\mathrm{SD}_{\log Y}}{\mathrm{SD}_{\log \mathrm{coral}}}\, \log 0.5\right) - 1\right]
+$$
+
+For the **total effect**, the change includes everything that follows from losing coral, including any fleshy algae that grow into the space. The **direct effect** on metabolism holds fleshy algae (and fish or N) at their observed values, so it describes coral being replaced by other substrate (sand, rubble, crustose coralline algae). The difference between the two is the part of the coral effect that runs through algal replacement and the consumer/nutrient pathway.
+
+```{r coral-scm-effects}
+#| label: coral-scm-effects
+
+coral_sd <- coral_scm_scale$sd[coral_scm_scale$var == "logcoral"]
+
+coral_effect_draws <- coral_scm_fits |>
+  mutate(
+    sd_out = map_dbl(outcome, \(o) coral_scm_scale$sd[coral_scm_scale$var == coral_node_vars[[o]]]),
+    draws  = map(fit, \(f) as_draws_df(f)$b_logcoral)
+  ) |>
+  select(dag, outcome, effect, estimand, sd_out, draws) |>
+  unnest(draws) |>
+  rename(beta = draws) |>
+  mutate(
+    pct_halving   = 100 * (exp(beta * sd_out / coral_sd * log(0.5)) - 1),
+    outcome_label = factor(coral_outcome_labels[outcome], rev(coral_outcome_labels)),
+    effect        = factor(str_to_sentence(effect), c("Total", "Direct"))
+  )
+
+coral_effect_summary <- coral_effect_draws |>
+  group_by(dag, outcome, outcome_label, effect) |>
+  summarise(
+    beta_med  = median(beta),
+    beta_lo   = quantile(beta, 0.025),
+    beta_hi   = quantile(beta, 0.975),
+    pct_med   = median(pct_halving),
+    pct_lo    = quantile(pct_halving, 0.025),
+    pct_hi    = quantile(pct_halving, 0.975),
+    p_decline = mean(pct_halving < 0),
+    .groups = "drop"
+  )
+
+coral_effect_summary |>
+  arrange(dag, desc(outcome_label), effect) |>
+  transmute(
+    DAG = dag, Outcome = as.character(outcome_label), Effect = effect,
+    `Std. coefficient` = sprintf("%s (%s, %s)", fmt(beta_med), fmt(beta_lo), fmt(beta_hi)),
+    `% change if coral halved` = sprintf("%s (%s, %s)", fmt(pct_med, 0), fmt(pct_lo, 0), fmt(pct_hi, 0)),
+    `P(decline)` = round(p_decline, 2)
+  ) |>
+  kbl(align = c("l", "l", "l", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "left")
+
+# Inline helper: "median% (95% CI lo, hi); P(decline) = p"
+scm_text <- function(o, e = "Total", d = "Revised DAG") {
+  r <- filter(coral_effect_summary, outcome == o, effect == e, dag == d)
+  sprintf("%s%% (95%% CI %s, %s); P(decline) = %s", fmt(r$pct_med, 0),
+          fmt(r$pct_lo, 0), fmt(r$pct_hi, 0), fmt(r$p_decline))
+}
+```
+
+```{r coral-scm-effects-plot}
+#| label: fig-coral-scm-effects
+#| fig-cap: "Causal effects of halving coral cover on downstream variables, each from its own DAG-informed model. Points are posterior medians, thick and thin bars 80% and 95% credible intervals. Total effects include algal replacement and all other downstream pathways; direct effects on metabolism hold fleshy algae, fish (Rd) and N (Pmax) constant. Left: revised DAG (adjusts for the long-term trend). Right: initial DAG, which ignores trend confounding, for comparison."
+#| fig-width: 11
+#| fig-height: 5.5
+
+# Intervals are computed here and drawn with base geoms (stat_pointinterval
+# is not compatible with every ggplot2/ggdist version combination)
+coral_effect_intervals <- coral_effect_draws |>
+  group_by(dag, outcome_label, effect) |>
+  median_qi(pct_halving, .width = c(0.8, 0.95)) |>
+  ungroup() |>
+  mutate(dag = factor(dag, names(coral_dags)))
+
+dodge <- position_dodge(width = 0.6)
+ggplot(coral_effect_intervals,
+       aes(x = pct_halving, y = outcome_label, colour = effect, group = effect)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(xmin = .lower, xmax = .upper, linewidth = factor(.width)),
+                 position = dodge) +
+  geom_point(data = \(d) filter(d, .width == 0.95), size = 2.5, position = dodge) +
+  scale_linewidth_manual(values = c(`0.8` = 1.5, `0.95` = 0.5), guide = "none") +
+  scale_colour_manual(values = c(Total = "black", Direct = "#d6604d"), name = NULL) +
+  facet_wrap(~ dag) +
+  labs(x = "% change in outcome if coral cover were halved", y = NULL) +
+  theme(legend.position = "bottom", text = element_text(size = 13))
+
+ggsave(here("Output", "fig_scm_effects.pdf"), width = 11, height = 5.5)
+```
+
+```{r coral-scm-counterfactual}
+#| label: fig-coral-scm-counterfactual
+#| fig-cap: "Counterfactual Rd and Pmax across the observed range of coral cover, from the DAG-informed models. Lines are posterior medians with 90% credible bands, with all adjustment covariates at their means, no disturbance and an average season. Total = coral loss with the observed algal response; Direct = coral replaced by other substrate with fleshy algae, fish and N held constant. Points are the observed seasonal values."
+#| fig-width: 10
+#| fig-height: 4.5
+
+coral_grid <- tibble(coral_pct = seq(min(YearSeason_Averages$mean_coral, na.rm = TRUE),
+                                     max(YearSeason_Averages$mean_coral, na.rm = TRUE),
+                                     length.out = 50)) |>
+  mutate(logcoral = (log(coral_pct / 100) - coral_scm_scale$mean[coral_scm_scale$var == "logcoral"]) /
+           coral_sd)
+
+coral_cf <- coral_scm_fits |>
+  filter(dag == "Revised DAG", outcome %in% c("Rd", "Pmax")) |>
+  mutate(pred = map(fit, \(f) {
+    # Every predictor other than coral is held at 0: the mean of the
+    # standardised covariates (mid-series for Year), no disturbance and the
+    # average season
+    other <- setdiff(all.vars(formula(f)$formula[[3]]), c("logcoral", "year_f"))
+    nd <- coral_grid
+    nd[other] <- 0
+    add_epred_draws(nd, f, re_formula = NA, ndraws = 2000)
+  })) |>
+  select(outcome, effect, pred) |>
+  unnest(pred) |>
+  # Back-transform from the standardised log scale to natural units
+  mutate(var = unname(coral_node_vars[outcome])) |>
+  left_join(coral_scm_scale, by = "var") |>
+  mutate(value  = exp(.epred * sd + mean),
+         effect = factor(str_to_sentence(effect), c("Total", "Direct")))
+
+coral_cf_obs <- YearSeason_Averages |>
+  filter(!is.na(Season)) |>
+  select(mean_coral, Rd, Pmax) |>
+  pivot_longer(c(Rd, Pmax), names_to = "outcome", values_to = "value")
+
+coral_cf_summary <- coral_cf |>
+  group_by(outcome, effect, coral_pct) |>
+  median_qi(value, .width = 0.9) |>
+  ungroup()
+
+ggplot(coral_cf_summary, aes(x = coral_pct, y = value)) +
+  geom_point(data = coral_cf_obs, aes(x = mean_coral), colour = "grey60") +
+  geom_ribbon(aes(ymin = .lower, ymax = .upper, fill = effect), alpha = 0.25) +
+  geom_line(aes(colour = effect), linewidth = 0.8) +
+  scale_colour_manual(values = c(Total = "black", Direct = "#d6604d"), name = NULL,
+                      aesthetics = c("colour", "fill")) +
+  facet_wrap(~ factor(outcome, c("Rd", "Pmax")), scales = "free_y") +
+  labs(x = "Coral cover (%)", y = "mmol O\u2082 m\u207b\u00b2 h\u207b\u00b9") +
+  theme(legend.position = "bottom", text = element_text(size = 13))
+```
+
+**How to read these results.** Each estimate answers one causal question under the stated DAG: "if coral cover were halved, by how much would this outcome change?" Only the coral coefficient of each model is interpretable; the adjustment covariates are there to block confounding, and their coefficients are not causal effects (they may themselves be confounded or partly mediated). Compared with the SEM, the total effects here do not hold fleshy algae constant: in the SEM, the coral→Pmax "total" effect (`r effect_text("coral_total")`, standardised) is conditional on fleshy algae and is therefore closer to the direct effect here. Under the revised DAG, halving coral cover changed Pmax by `r scm_text("Pmax")` in total and `r scm_text("Pmax", "Direct")` directly, and Rd by `r scm_text("Rd")` in total and `r scm_text("Rd", "Direct")` directly. For fleshy algae cover the total effect was `r scm_text("Fleshy")`; for N content `r scm_text("N")`; for corallivore biomass `r scm_text("Coralliv")`; for herbivore biomass `r scm_text("Herb")`; and for total fish biomass `r scm_text("Fish")`.
+
+The gap between total and direct effects is the mediated part of the effect. A total effect that is clearly non-zero alongside a direct effect that overlaps zero (as for Rd here) means that most of the consequence of coral loss runs through what replaces the coral and through fish, rather than through the loss of coral tissue itself. Similar total and direct effects (as for Pmax) mean the mediators carry little of the effect. With this few years, a difference of this kind is suggestive rather than established: the total and direct intervals overlap, and the indirect effect is not estimated as a separate quantity. The right-hand panel shows how the conclusions would change under the initial DAG, which ignores the shared long-term trend.
+
+**Caveats.** These are causal estimates only if the revised DAG is right, in particular if there are no unmeasured common causes of coral cover and an outcome beyond what a linear Year term captures. Coral declined almost monotonically from 2006 to about 2015 while fleshy algae and fish biomass increased. Adjusting for Year means the total effects are identified from year-to-year deviations around those trends, which is a much weaker source of information with about 19 years, so wide intervals are expected; it also means a genuine causal effect of coral that unfolds as a slow trend is partly absorbed by Year. For several outcomes the initial-DAG estimates are larger and more precise because they use the full trend, but the local tests indicate that they are confounded by it. The total-effect models carry six or more covariates on about 19 years, so they lean on the normal(0, 1) priors. Residual temporal autocorrelation is not modelled beyond the lagged covariates.
+
+## Supplementary: coral dominance (single log-ratio) SEM
+
+An earlier version of the seasonal SEM represented the benthos by a single log ratio of coral to fleshy algae cover (coral dominance). A log ratio is itself a compositional transformation, so this model is also unaffected by the shared total, but it cannot separate coral change from algal change. It is retained for comparison and as the basis for the disturbance-timing, AR(1) and recruitment analyses below. Its metabolism block uses coral dominance in place of log coral and log fleshy algae cover; all other settings match the main SEM.
+
+```{r sem-season-cd-fit}
+#| label: sem-season-cd-model
+#| cache: true
+#| dependson: ["sem-season-preparation", "sem-season-metab-model"]
+
+bf_coral_cd    <- bf(coraldom | subset(sub_coral) ~ 1 + coraldom_lag1 + temperature +
+                       Disturbance + logherbs_lag1 + logcoralliv_lag1 +
+                       mi(logrec3, idx = obs_id), family = gaussian())
+bf_coralliv_cd <- bf(logcoralliv | subset(sub_coralliv) ~ 1 + coraldom, family = gaussian())
+bf_herbs_cd    <- bf(logherbs | subset(sub_herbs) ~ 1 + coraldom, family = gaussian())
+bf_N_cd        <- bf(logN | subset(sub_N) ~ 1 + coraldom, family = gaussian())
+
+annual_resps_cd  <- c("temperature", "coraldom", "logcoralliv", "logherbs", "logN")
+annual_priors_cd <- c(
+  do.call(c, lapply(annual_resps_cd, \(r) set_prior("normal(0, 2)", class = "b", resp = r))),
+  do.call(c, lapply(annual_resps_cd, \(r) set_prior("normal(0, 2)", class = "Intercept", resp = r))),
+  set_prior("normal(0, 0.25)", class = "sigma", resp = "temperature", lb = 0),
+  set_prior("normal(0, 2)", class = "Intercept", resp = "logrec3")
+)
+
+brms_sem_season_annual_cd <- brm(
+  bf_temp_s + bf_coral_cd + bf_rec_s + bf_coralliv_cd + bf_herbs_cd + bf_N_cd +
+    set_rescor(FALSE),
+  data = semdata_season, chains = 3, iter = 10000, warmup = 5000, seed = 6081,
+  sample_prior = "no", prior = annual_priors_cd,
+  control = list(adapt_delta = 0.99, max_treedepth = 15), silent = 2, refresh = 0
+)
+
+brms_sem_season_metab_cd <- brm(
+  bf(logrd ~ 1 + coraldom + temperature + summer + (1 | p | year_f), family = gaussian()) +
+    bf(logpmax ~ 1 + coraldom + temperature + summer + logN + (1 | p | year_f),
+       family = gaussian()) +
+    set_rescor(TRUE),
+  data = semdata_metab, chains = 3, iter = 10000, warmup = 5000, seed = 6081,
+  sample_prior = "no", prior = metab_priors,
+  control = list(adapt_delta = 0.99, max_treedepth = 15), silent = 2, refresh = 0
+)
+```
+
+```{r sem-season-cd-compare}
+#| label: sem-season-cd-comparison
+
+fe_cd  <- season_fixef(brms_sem_season_annual_cd, brms_sem_season_metab_cd)
+fe_dir <- season_fixef()
+
+term_txt <- function(fe, term) {
+  if (is.na(term)) return("\u2014")
+  sprintf("%.2f (%.2f, %.2f)", fe[term, "Estimate"], fe[term, "Q2.5"], fe[term, "Q97.5"])
+}
+
+# Matching paths in the two models (coral dominance vs Dirichlet / cover)
+tribble(
+  ~path,                                ~cd,                           ~dirichlet,
+  "Temperature \u2192 coral",           "coraldom_temperature",        "mucoral_comp_temperature",
+  "Temperature \u2192 fleshy algae",    NA,                            "mufleshy_comp_temperature",
+  "Disturbance \u2192 coral",           "coraldom_Disturbance",        "mucoral_comp_Disturbance",
+  "Disturbance \u2192 fleshy algae",    NA,                            "mufleshy_comp_Disturbance",
+  "Recruitment (t\u22123) \u2192 coral", "coraldom_milogrec3idxEQobs_id", "mucoral_comp_milogrec3idxEQobs_id",
+  "Herbivores (t\u22121) \u2192 benthos", "coraldom_logherbs_lag1",     "mufleshy_comp_logherbs_lag1",
+  "Corallivores (t\u22121) \u2192 benthos", "coraldom_logcoralliv_lag1", "mucoral_comp_logcoralliv_lag1",
+  "Benthos \u2192 herbivores",          "logherbs_coraldom",           "logherbs_logfleshy_z",
+  "Benthos \u2192 corallivores",        "logcoralliv_coraldom",        "logcoralliv_logcoral_z",
+  "Coral \u2192 N",                     "logN_coraldom",               "logN_logcoral_z",
+  "Fleshy algae \u2192 N",              NA,                            "logN_logfleshy_z",
+  "Coral \u2192 Rd",                    "logrd_coraldom",              "logrd_logcoral_z",
+  "Fleshy algae \u2192 Rd",             NA,                            "logrd_logfleshy_z",
+  "Coral \u2192 Pmax (direct)",         "logpmax_coraldom",            "logpmax_logcoral_z",
+  "Fleshy algae \u2192 Pmax (direct)",  NA,                            "logpmax_logfleshy_z"
+) |>
+  mutate(
+    `Coral dominance model` = map_chr(cd, \(t) term_txt(fe_cd, t)),
+    `Dirichlet model`       = map_chr(dirichlet, \(t) term_txt(fe_dir, t))
+  ) |>
+  select(Path = path, `Coral dominance model`, `Dirichlet model`) |>
+  kbl() |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, position = "left") |>
+  footnote(general = "In the coral dominance model, benthic predictors and responses are coral dominance (log coral / fleshy algae); positive = more coral relative to algae. Dirichlet effects on coral and fleshy algae are on log(part / other cover).",
+           general_title = "")
+```
+
+### Disturbance timing: current vs previous year
+
+Coral surveys may precede the mortality caused by a disturbance in the same calendar year (e.g. bleaching late in the warm season), in which case losses would appear in the following year's survey. The dynamic coral equation is refit on its own with current-year disturbance, previous-year disturbance, or both. Because the annual block has no residual correlations, the coral equation alone gives the same posterior as within the block.
+
+```{r sem-season-disturbance-lag}
+#| label: sem-season-disturbance-lag
+#| cache: true
+#| dependson: ["sem-season-preparation"]
+
+coral_dist_data <- semdata_season |> filter(sub_coral)
+
+coral_dist_forms <- list(
+  current  = coraldom ~ 1 + coraldom_lag1 + temperature + Disturbance +
+    logherbs_lag1 + logcoralliv_lag1,
+  previous = coraldom ~ 1 + coraldom_lag1 + temperature + Disturbance_lag1 +
+    logherbs_lag1 + logcoralliv_lag1,
+  both     = coraldom ~ 1 + coraldom_lag1 + temperature + Disturbance +
+    Disturbance_lag1 + logherbs_lag1 + logcoralliv_lag1
+)
+
+coral_dist_fits <- lapply(coral_dist_forms, \(f) brm(
+  f,
+  data = coral_dist_data,
+  prior = c(set_prior("normal(0, 2)", class = "b"),
+            set_prior("normal(0, 2)", class = "Intercept")),
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 6081,
+  control = list(adapt_delta = 0.99),
+  silent = 2,
+  refresh = 0
+))
+```
+
+```{r sem-season-disturbance-lag-compare}
+#| label: sem-season-disturbance-lag-comparison
+
+coral_dist_coefs <- map_dfr(names(coral_dist_fits), \(m) {
+  fe <- fixef(coral_dist_fits[[m]])
+  as_tibble(fe, rownames = "term") |>
+    filter(term %in% c("coraldom_lag1", "Disturbance", "Disturbance_lag1")) |>
+    mutate(model = m, .before = 1)
+})
+coral_dist_coefs |> mutate(across(where(is.double), \(x) round(x, 2)))
+
+loo::loo_compare(lapply(coral_dist_fits, loo))
+```
+
+### Lagged coral dominance vs AR(1) residuals
+
+The dynamic coral equation (previous-year coral dominance as a predictor) is compared with the earlier AR(1)-residual specification on the same rows and predictors. With AR(1) residuals, year-to-year memory sits in the error term, so a disturbance shifts coral dominance only in the year it occurs. With lagged coral dominance as a predictor, effects carry forward into later years. PSIS-LOO treats years as exchangeable, which is optimistic for time series; it is used here only for a like-for-like comparison of the two specifications.
+
+```{r sem-season-ar-vs-lag}
+#| label: sem-season-ar-vs-lag
+#| cache: true
+#| dependson: ["sem-season-preparation", "sem-season-disturbance-lag"]
+
+coral_ar_fit <- brm(
+  coraldom ~ 1 + temperature + Disturbance + logherbs_lag1 + logcoralliv_lag1 +
+    ar(time = Year, p = 1),
+  data = coral_dist_data,
+  prior = c(set_prior("normal(0, 2)", class = "b"),
+            set_prior("normal(0, 2)", class = "Intercept"),
+            set_prior("normal(0, 0.5)", class = "ar", lb = -1, ub = 1)),
+  chains = 3,
+  iter = 10000,
+  warmup = 5000,
+  seed = 6081,
+  control = list(adapt_delta = 0.99),
+  silent = 2,
+  refresh = 0
+)
+```
+
+```{r sem-season-ar-vs-lag-compare}
+#| label: sem-season-ar-vs-lag-comparison
+
+coral_memory_fits <- list(lagged_coral = coral_dist_fits$current,
+                          ar1_residual = coral_ar_fit)
+
+loo::loo_compare(lapply(coral_memory_fits, loo))
+
+tibble(
+  model      = names(coral_memory_fits),
+  R2         = sapply(coral_memory_fits, \(m) median(bayes_R2(m, summary = FALSE))),
+  memory     = c(fixef(coral_dist_fits$current)["coraldom_lag1", "Estimate"],
+                 posterior_summary(coral_ar_fit, variable = "ar[1]")[, "Estimate"]),
+  temp       = sapply(coral_memory_fits, \(m) fixef(m)["temperature", "Estimate"]),
+  disturbance = sapply(coral_memory_fits, \(m) fixef(m)["Disturbance", "Estimate"])
+) |>
+  mutate(across(where(is.double), \(x) round(x, 2)))
+```
+
+### Coral recruitment and the unexplained decline in coral dominance
+
+Without recruitment, much of the 2007–2015 decline in coral dominance was not explained by the predictors. Because predictors are centred, the intercept of the dynamic equation is close to the sample-average change and changes little when a predictor is added. Whether recruitment explains the decline is therefore judged from the residuals: their SD, whether they are systematically negative during the decline (2007–2015) and positive afterwards, and their trend over time. The coral equation is compared with and without lagged recruitment on all 19 years (recruitment imputed for 2007, 2008 and 2021) and on the 16 years with observed recruitment (no imputation).
+
+```{r sem-season-recruit-check}
+#| label: sem-season-recruit-check
+#| cache: true
+#| dependson: ["sem-season-preparation"]
+
+rec_cc_data <- semdata_season |> filter(sub_coral, !is.na(logrec3))
+
+fit_coral_eq <- function(f, data) {
+  brm(f, data = data,
+      prior = c(set_prior("normal(0, 2)", class = "b"),
+                set_prior("normal(0, 2)", class = "Intercept")),
+      chains = 3, iter = 10000, warmup = 5000, seed = 6081,
+      control = list(adapt_delta = 0.99), silent = 2, refresh = 0)
+}
+
+coral_base_form <- coraldom ~ 1 + coraldom_lag1 + temperature + Disturbance +
+  logherbs_lag1 + logcoralliv_lag1
+
+coral_rec_cc_fits <- list(
+  without_recruitment = fit_coral_eq(coral_base_form, rec_cc_data),
+  with_recruitment    = fit_coral_eq(update(coral_base_form, . ~ . + logrec3), rec_cc_data)
+)
+```
+
+```{r sem-season-recruit-compare}
+#| label: sem-season-recruit-comparison
+
+coral_years_all <- as.numeric(as.character(semdata_season$year_f[semdata_season$sub_coral]))
+coral_years_cc  <- as.numeric(as.character(rec_cc_data$year_f))
+
+# Residual diagnostics (coral dominance SD units) from posterior mean fits
+coral_resid_diag <- function(mu, y, years) {
+  res <- y - colMeans(mu)
+  var_mu <- apply(mu, 1, var)
+  var_res <- apply(sweep(mu, 2, y), 1, var)
+  tibble(
+    n                      = length(y),
+    R2                     = median(var_mu / (var_mu + var_res)),
+    resid_sd               = sd(res),
+    mean_resid_2007_2015   = mean(res[years <= 2015]),
+    mean_resid_2016_2025   = mean(res[years > 2015]),
+    resid_trend_per_decade = unname(coef(lm(res ~ years))[2]) * 10
+  )
+}
+
+# Coefficient summary "est (lo, hi)" for a named term, NA if absent
+coef_txt <- function(fe, term) {
+  if (!term %in% rownames(fe)) return(NA_character_)
+  sprintf("%.2f (%.2f, %.2f)", fe[term, "Estimate"], fe[term, "Q2.5"], fe[term, "Q97.5"])
+}
+
+fe_main <- fixef(brms_sem_season_annual_cd)
+fe_dist <- fixef(coral_dist_fits$current)
+fe_cc0  <- fixef(coral_rec_cc_fits$without_recruitment)
+fe_cc1  <- fixef(coral_rec_cc_fits$with_recruitment)
+
+coral_recruit_diag <- bind_rows(
+  coral_resid_diag(posterior_epred(coral_dist_fits$current), coral_dist_data$coraldom,
+                   coral_years_all) |>
+    mutate(model = "19 yr, without recruitment",
+           phi = coef_txt(fe_dist, "coraldom_lag1"),
+           recruitment = NA_character_,
+           intercept = coef_txt(fe_dist, "Intercept")),
+  coral_resid_diag(posterior_epred(brms_sem_season_annual_cd, resp = "coraldom"),
+                   semdata_season$coraldom[semdata_season$sub_coral], coral_years_all) |>
+    mutate(model = "19 yr, with recruitment (imputed; coral dominance SEM)",
+           phi = coef_txt(fe_main, "coraldom_coraldom_lag1"),
+           recruitment = coef_txt(fe_main, "coraldom_milogrec3idxEQobs_id"),
+           intercept = coef_txt(fe_main, "coraldom_Intercept")),
+  coral_resid_diag(posterior_epred(coral_rec_cc_fits$without_recruitment),
+                   rec_cc_data$coraldom, coral_years_cc) |>
+    mutate(model = "16 yr, without recruitment",
+           phi = coef_txt(fe_cc0, "coraldom_lag1"),
+           recruitment = NA_character_,
+           intercept = coef_txt(fe_cc0, "Intercept")),
+  coral_resid_diag(posterior_epred(coral_rec_cc_fits$with_recruitment),
+                   rec_cc_data$coraldom, coral_years_cc) |>
+    mutate(model = "16 yr, with recruitment (observed only)",
+           phi = coef_txt(fe_cc1, "coraldom_lag1"),
+           recruitment = coef_txt(fe_cc1, "logrec3"),
+           intercept = coef_txt(fe_cc1, "Intercept"))
+) |>
+  select(model, n, recruitment, phi, intercept, R2, resid_sd,
+         mean_resid_2007_2015, mean_resid_2016_2025, resid_trend_per_decade)
+
+coral_recruit_diag |> mutate(across(where(is.double), \(x) round(x, 2)))
+
+# Level the dynamic coral equation relaxes towards: intercept / (1 - phi),
+# using draws with phi < 1 (stationary)
+coral_eq_draws <- as_draws_df(brms_sem_season_annual_cd) |>
+  filter(b_coraldom_coraldom_lag1 < 1) |>
+  mutate(equilibrium = b_coraldom_Intercept / (1 - b_coraldom_coraldom_lag1))
+coral_equilibrium <- quantile(coral_eq_draws$equilibrium, c(0.025, 0.5, 0.975))
+coral_equilibrium
+
+# Out-of-sample comparison on the same rows
+recruit_loo_all <- loo::loo_compare(list(
+  without_recruitment = loo(coral_dist_fits$current),
+  with_recruitment    = loo_block(brms_sem_season_annual_cd, resp = "coraldom")
+))
+recruit_loo_cc <- loo::loo_compare(lapply(coral_rec_cc_fits, loo))
+recruit_loo_all
+recruit_loo_cc
+```
+
+Lagged lagoon recruitment had a coefficient of `r coral_recruit_diag$recruitment[2]` in the coral dominance SEM (imputed years included) and `r coral_recruit_diag$recruitment[4]` using observed years only. Adding it changed the residual SD of coral dominance from `r fmt(coral_recruit_diag$resid_sd[1])` to `r fmt(coral_recruit_diag$resid_sd[2])` SD, and the PSIS-LOO difference was `r fmt(abs(recruit_loo_all[2, "elpd_diff"]), 1)` ± `r fmt(recruit_loo_all[2, "se_diff"], 1)` (all years) and `r fmt(abs(recruit_loo_cc[2, "elpd_diff"]), 1)` ± `r fmt(recruit_loo_cc[2, "se_diff"], 1)` (observed years). Even without recruitment, residuals were close to zero on average during the decline (2007–2015: `r fmt(coral_recruit_diag$mean_resid_2007_2015[1])`) and afterwards (2016–2025: `r fmt(coral_recruit_diag$mean_resid_2016_2025[1])`). The dynamic equation reproduces the decline as relaxation towards a low equilibrium coral dominance of `r fmt(coral_equilibrium[2])` SD (95% CI `r fmt(coral_equilibrium[1])`, `r fmt(coral_equilibrium[3])`; observed range `r fmt(min(semdata_season$coraldom[semdata_season$sub_coral]))` to `r fmt(max(semdata_season$coraldom[semdata_season$sub_coral]))`). The covariates, including recruitment, explain little of the year-to-year deviation from that path. What remains unexplained is why coral dominance started far above this equilibrium in 2006, and what set the equilibrium so low.
 
 
 
 # Supplementary Material
 
 ## Supplementary Figure 1: Photosynthesis-Irradiance Curves
-
-```{r fig-pi-curves}
-#| label: fig-pi-curves
-#| cache: false
-#| fig-cap: "**Figure S1.** Photosynthesis-irradiance (PI) curves by year."
-#| fig-width: 9
-#| fig-height: 7
-
-par_seq <- seq(0, max(LTER1_Pnet$PAR, na.rm = TRUE), length.out = 200)
-
-pi_params_plot <- fixef(fit1_f) |>
-  as.data.frame() |>
-  rownames_to_column("param") |>
-  as_tibble() |>
-  separate(param, into = c("type", "year_str"), sep = "_Year", remove = FALSE) |>
-  mutate(year = as.integer(year_str)) |>
-  filter(!is.na(year)) |>
-  select(type, year, Estimate) |>
-  pivot_wider(names_from = type, values_from = Estimate) |>
-  mutate(Rd = -Rd)
-
-fitted_curves <- pi_params_plot |>
-  rowwise() |>
-  reframe(
-    year   = year,
-    PAR    = par_seq,
-    PP_fit = (alpha * Pmax * par_seq) / (alpha * par_seq + Pmax) - Rd
-  )
-
-raw_data_plot <- LTER1_Pnet |>
-  mutate(year = as.integer(as.character(Year)))
-
-param_labels <- pi_params_plot |>
-  mutate(
-    label = sprintf("Pmax = %.0f\nRd = %.0f", Pmax, Rd),
-    PAR   = max(LTER1_Pnet$PAR, na.rm = TRUE) * 0.97,
-    PP    = min(LTER1_Pnet$PP,  na.rm = TRUE) * 0.85
-  )
-
-ggplot() +
-  geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
-  geom_point(data = raw_data_plot,
-             aes(x = PAR, y = PP),
-             colour = "grey50", size = 0.5, alpha = 0.4, shape = 16) +
-  geom_line(data = fitted_curves,
-            aes(x = PAR, y = PP_fit),
-            colour = "#1A237E", linewidth = 0.7) +
-  facet_wrap(~year, ncol = 6) +
-  scale_x_continuous(breaks = c(0, 1000, 2000)) +
-  labs(
-    x = expression(PAR~(mu*mol~photons~m^{-2}~s^{-1})),
-    y = expression(Net~production~(mmol~O[2]~m^{-2}~hr^{-1}))
-  ) +
-  theme_bw(base_size = 8) +
-  theme(
-    strip.background = element_blank(),
-    strip.text       = element_text(size = 8, face = "bold"),
-    panel.grid.minor = element_blank(),
-    axis.text        = element_text(size = 8),
-    axis.title = element_text(size = 12))
-ggsave(here("Output", "figS1_pi_curves.pdf"), width = 9, height = 7)
-
-
-```
-
-## Supplementary Figure 2: SEM Observed vs. Fitted Trajectories
-
-```{r fig-sem-obs-fit}
-#| label: fig-sem-obs-fit
-#| cache: false
-#| fig-cap: "**Figure S2.** SEM observed vs. fitted trajectories."
-#| fig-width: 10
-#| fig-height: 6
-
-# Response metadata — ordered by causal depth in the DAG
-resp_meta <- tibble(
-  resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
-            "Corallivore", "herbs",    "logpmax", "Npercent"),
-  label = c("Temperature", "Coral cover", "Ecosystem\nrespiration", "Fleshy\nmacroalgae\n& turf",
-            "Corallivore\nbiomass", "Herbivore\nbiomass", "Ecosystem\nPmax", "Algal N\ncontent")
-)
-
-# Actual calendar years aligned to semdata2 rows
-# actual_years must match rows brms used: excludes years where any non-mi()
-# predictor is NA (i.e. yearresid = NA when Max_temp = NA for 2025)
-actual_years <- Year_Averages |>
-  filter(!is.na(log_coral), !is.na(Max_temp)) |>
-  pull(Year)
-
-obs_fit_df <- resp_meta$resp |>
-  map(function(r) {
-    obs  <- semdata2[[r]]
-    fit  <- fitted(brms_sem_reduced, resp = r)[, c("Estimate", "Q2.5", "Q97.5")]
-    n_fit <- nrow(fit)
-    tibble(
-      Year     = actual_years[seq_len(n_fit)],
-      observed = obs[seq_len(n_fit)],
-      fitted   = fit[, "Estimate"],
-      lo95     = fit[, "Q2.5"],
-      hi95     = fit[, "Q97.5"],
-      resp     = r
-    )
-  }) |>
-  bind_rows() |>
-  left_join(resp_meta, by = "resp") |>
-  mutate(label = factor(label, levels = resp_meta$label))
-
-figS2 <- ggplot(obs_fit_df, aes(x = Year)) +
-  geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "#2c7bb6", alpha = 0.18) +
-  geom_line(aes(y = fitted), colour = "#2c7bb6", linewidth = 0.75) +
-  geom_point(aes(y = observed), size = 1.6, colour = "black", na.rm = TRUE) +
-  facet_wrap(~ label, scales = "free_y", ncol = 4) +
-  scale_x_continuous(breaks = c(2005, 2015, 2025), minor_breaks = NULL) +
-  labs(x = NULL, y = "z-score") +
-  theme_bw(base_size = 10) +
-  theme(
-    strip.background = element_blank(),
-    strip.text       = element_text(size = 9, face = "bold"),
-    panel.grid.minor = element_blank(),
-    axis.text.x      = element_text(size = 7)
-  )
-
-ggsave(here("Output", "figS2_sem_obs_fit.pdf"), plot = figS2, width = 10, height = 6)
-
-figS2
-```
-
-## Supplementary Figure 3: SEM Posterior Predictive Checks
-
-```{r fig-sem-ppc}
-#| label: fig-sem-ppc
-#| cache: false
-#| fig-cap: "**Figure S3.** Posterior predictive checks."
-#| fig-width: 10
-#| fig-height: 6
-
-color_scheme_set("blue")
-
-# resp_meta defined in fig-sem-obs-fit; redefined here for chunk independence
-if (!exists("resp_meta")) {
-  resp_meta <- tibble(
-    resp  = c("temperature", "logcoral", "logrd",  "logfleshy",
-              "Corallivore", "herbs",    "logpmax", "Npercent"),
-    label = c("Temperature", "Coral cover", "Ecosystem\nrespiration", "Fleshy\nmacroalgae\n& turf",
-              "Corallivore\nbiomass", "Herbivore\nbiomass", "Ecosystem\nPmax", "Algal N\ncontent")
-  )
-}
-
-ppc_plots <- map2(resp_meta$resp, resp_meta$label, function(r, lab) {
-  pp_check(brms_sem_reduced, resp = r, ndraws = 100, type = "dens_overlay") +
-    ggtitle(gsub("\n", " ", lab)) +
-    theme_bw(base_size = 9) +
-    theme(
-      legend.position  = "none",
-      plot.title       = element_text(size = 10, face = "bold"),
-      axis.title       = element_text(size = 8),
-      panel.grid.minor = element_blank()
-    )
-})
-ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
-wrap_plots(ppc_plots, ncol = 4)
-ggsave(here("Output", "figS3_ppc.pdf"), width = 10, height = 6)
-```
-
-## Supplementary Table 1: SEM Path Coefficients
-
-```{r tbl-sem-paths}
-#| label: tbl-sem-paths
-#| tbl-cap: "**Supplementary Table 1.** Standardised path coefficients from the Bayesian multivariate structural equation model (12 pathways, n = 19 annual observations, 2006–2024).**" 
-
-# Build tidy table from brms fixed effects summary
-sem_coef_table <- as.data.frame(summary(brms_sem_full)$fixed) |>
-  tibble::rownames_to_column("term") |>
-  # Keep only regression coefficients (exclude intercepts)
-  filter(!grepl("Intercept", term)) |>
-  mutate(
-    # Parse response and predictor from "response_predictor" format
-    Pathway = case_when(
-      term == "temperature_Year"         ~ "Year → Temperature",
-      term == "logcoral_temperature"     ~ "Temperature → Coral cover",
-      term == "logcoral_yearresid"       ~ "Year residual → Coral cover",
-      term == "logrd_logcoral"           ~ "Coral cover → Ecosystem respiration",
-      term == "logrd_mitemperature"      ~ "Temperature → Ecosystem respiration (direct)",
-      term == "logfleshy_logcoral"       ~ "Coral cover → Fleshy macroalgae",
-      term == "Corallivore_logcoral"     ~ "Coral cover → Corallivore biomass",
-      term == "herbs_logfleshy"          ~ "Fleshy macroalgae → Herbivore biomass",
-      term == "logpmax_milogrd"          ~ "Ecosystem respiration → Ecosystem Pmax",
-      term == "logpmax_logcoral"         ~ "Coral cover → Ecosystem Pmax (direct)",
-      term == "logpmax_mitemperature"    ~ "Temperature → Ecosystem Pmax (direct)",
-      term == "Npercent_milogrd"         ~ "Ecosystem respiration → Algal N content",
-      TRUE ~ term
-    ),
-    Credible = if_else(sign(`l-95% CI`) == sign(`u-95% CI`), "†", ""),
-    beta  = sprintf("%.3f", Estimate),
-    CI    = sprintf("[%.3f, %.3f]", `l-95% CI`, `u-95% CI`),
-    Rhat  = sprintf("%.4f", Rhat),
-    BESS  = formatC(round(Bulk_ESS), format = "d", big.mark = ","),
-    TESS  = formatC(round(Tail_ESS), format = "d", big.mark = ",")
-  ) |>
-  # Order by causal chain
-  mutate(order = case_when(
-    grepl("Year →",              Pathway) ~ 1,
-    grepl("Temperature →",       Pathway) ~ 2,
-    grepl("Year residual →",     Pathway) ~ 2,
-    grepl("Coral cover →",       Pathway) ~ 3,
-    grepl("Fleshy macroalgae →", Pathway) ~ 4,
-    grepl("Ecosystem respiration →", Pathway) ~ 5,
-    TRUE ~ 6
-  )) |>
-  arrange(order, Pathway) |>
-  select(Pathway, Credible, beta, CI, Rhat, `Bulk ESS` = BESS, `Tail ESS` = TESS)
-
-kable(sem_coef_table, align = c("l", "c", "r", "c", "r", "r", "r"),
-      col.names = c("Pathway", "", "β", "95% CI", "R̂", "Bulk ESS", "Tail ESS")) |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE,
-                font_size = 12) |>
-  column_spec(1, width = "14em") |>
-  column_spec(2, width = "1em") |>
-  footnote(symbol = "95% credible interval excludes zero.")
-```
 
 
 # References
